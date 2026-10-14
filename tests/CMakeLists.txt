@@ -126,6 +126,7 @@ set(TEST_CPP_SOURCES
     coro/test_async_semaphore.cpp
     # Async I/O tests
     io/test_async_io.cpp
+    io/test_file_ops.cpp
     # Task Graph tests
     task_graph/test_task_graph.cpp
     # Reader tests

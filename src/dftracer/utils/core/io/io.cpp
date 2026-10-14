@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/io/file_ops.h>
 #include <dftracer/utils/core/io/io_backend.h>
 #include <dftracer/utils/core/io/io_sendfile.h>
 #include <dftracer/utils/core/io/ops.h>
@@ -47,109 +48,117 @@ IoAwaitable io_dispatch(Sync sync, Args... args) noexcept {
     }
     auto result = sync(args...);
     if (result < 0) result = -errno;
-    return IoAwaitable::ready(static_cast<ssize_t>(result));
+    return IoAwaitable::ready(static_cast<IoResult>(result));
 }
 
 }  // namespace
 
 IoAwaitable read(int fd, void* buf, std::size_t len) noexcept {
     return io_dispatch<&IoBackend::submit_read>(
-        [](int f, void* b, std::size_t n) { return ::read(f, b, n); }, fd, buf,
-        len);
+        [](int f, void* b, std::size_t n) { return file_ops::read(f, b, n); },
+        fd, buf, len);
 }
 
 IoAwaitable write(int fd, const void* buf, std::size_t len) noexcept {
     return io_dispatch<&IoBackend::submit_write>(
-        [](int f, const void* b, std::size_t n) { return ::write(f, b, n); },
+        [](int f, const void* b, std::size_t n) {
+            return file_ops::write(f, b, n);
+        },
         fd, buf, len);
 }
 
-IoAwaitable pread(int fd, void* buf, std::size_t len, off_t offset) noexcept {
+IoAwaitable pread(int fd, void* buf, std::size_t len,
+                  FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pread>(
-        [](int f, void* b, std::size_t n, off_t o) {
-            return ::pread(f, b, n, o);
+        [](int f, void* b, std::size_t n, FileOffset o) {
+            return file_ops::pread(f, b, n, o);
         },
         fd, buf, len, offset);
 }
 
 IoAwaitable pwrite(int fd, const void* buf, std::size_t len,
-                   off_t offset) noexcept {
+                   FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pwrite>(
-        [](int f, const void* b, std::size_t n, off_t o) {
-            return ::pwrite(f, b, n, o);
+        [](int f, const void* b, std::size_t n, FileOffset o) {
+            return file_ops::pwrite(f, b, n, o);
         },
         fd, buf, len, offset);
 }
 
-IoAwaitable open(const char* path, int flags, mode_t mode) noexcept {
+IoAwaitable open(const char* path, int flags, FileMode mode) noexcept {
     return io_dispatch<&IoBackend::submit_open>(
-        [](const char* p, int fl, mode_t m) { return ::open(p, fl, m); }, path,
-        flags, mode);
+        [](const char* p, int fl, FileMode m) {
+            return file_ops::open(p, fl, m);
+        },
+        path, flags, mode);
 }
 
 IoAwaitable close(int fd) noexcept {
     return io_dispatch<&IoBackend::submit_close>(
-        [](int f) { return ::close(f); }, fd);
+        [](int f) { return file_ops::close(f); }, fd);
 }
 
 IoAwaitable fsync(int fd) noexcept {
     return io_dispatch<&IoBackend::submit_fsync>(
-        [](int f) { return ::fsync(f); }, fd);
+        [](int f) { return file_ops::fsync(f); }, fd);
 }
 
-IoAwaitable ftruncate(int fd, off_t length) noexcept {
+IoAwaitable ftruncate(int fd, FileOffset length) noexcept {
     return io_dispatch<&IoBackend::submit_ftruncate>(
-        [](int f, off_t l) { return ::ftruncate(f, l); }, fd, length);
+        [](int f, FileOffset l) { return file_ops::truncate(f, l); }, fd,
+        length);
 }
 
-IoAwaitable fstat(int fd, struct stat* buf) noexcept {
+IoAwaitable fstat(int fd, FileStat* buf) noexcept {
     return io_dispatch<&IoBackend::submit_fstat>(
-        [](int f, struct stat* b) { return ::fstat(f, b); }, fd, buf);
+        [](int f, FileStat* b) { return file_ops::stat_fd(f, b); }, fd, buf);
 }
 
-IoAwaitable accept(int listen_fd, struct sockaddr* addr,
-                   socklen_t* addrlen) noexcept {
+IoAwaitable accept(SocketHandle listen_fd, struct sockaddr* addr,
+                   SocketLength* addrlen) noexcept {
     return io_dispatch<&IoBackend::submit_accept>(
-        [](int lf, struct sockaddr* a, socklen_t* al) {
+        [](SocketHandle lf, struct sockaddr* a, SocketLength* al) {
             return ::accept(lf, a, al);
         },
         listen_fd, addr, addrlen);
 }
 
-IoAwaitable recv(int fd, void* buf, std::size_t len, int flags) noexcept {
+IoAwaitable recv(SocketHandle fd, void* buf, std::size_t len,
+                 int flags) noexcept {
     return io_dispatch<&IoBackend::submit_recv>(
-        [](int f, void* b, std::size_t n, int fl) {
+        [](SocketHandle f, void* b, std::size_t n, int fl) {
             return ::recv(f, b, n, fl);
         },
         fd, buf, len, flags);
 }
 
-IoAwaitable send(int fd, const void* buf, std::size_t len, int flags) noexcept {
+IoAwaitable send(SocketHandle fd, const void* buf, std::size_t len,
+                 int flags) noexcept {
     return io_dispatch<&IoBackend::submit_send>(
-        [](int f, const void* b, std::size_t n, int fl) {
+        [](SocketHandle f, const void* b, std::size_t n, int fl) {
             return ::send(f, b, n, fl);
         },
         fd, buf, len, flags);
 }
 
-IoAwaitable readv(int fd, const struct iovec* iov, int iovcnt) noexcept {
+IoAwaitable readv(int fd, const IoVec* iov, int iovcnt) noexcept {
     return io_dispatch<&IoBackend::submit_readv>(
-        [](int f, const struct iovec* v, int c) { return ::readv(f, v, c); },
-        fd, iov, iovcnt);
+        [](int f, const IoVec* v, int c) { return ::readv(f, v, c); }, fd, iov,
+        iovcnt);
 }
 
-IoAwaitable writev(int fd, const struct iovec* iov, int iovcnt) noexcept {
+IoAwaitable writev(int fd, const IoVec* iov, int iovcnt) noexcept {
     return io_dispatch<&IoBackend::submit_writev>(
-        [](int f, const struct iovec* v, int c) { return ::writev(f, v, c); },
-        fd, iov, iovcnt);
+        [](int f, const IoVec* v, int c) { return ::writev(f, v, c); }, fd, iov,
+        iovcnt);
 }
 
-coro::CoroTask<ssize_t> writev_all(int fd, struct iovec* iov, int iovcnt) {
-    ssize_t total = 0;
+coro::CoroTask<IoResult> writev_all(int fd, IoVec* iov, int iovcnt) {
+    IoResult total = 0;
     int i = 0;
     while (i < iovcnt) {
         int n = std::min(iovcnt - i, iov_max_entries());
-        ssize_t rc = co_await io::writev(fd, iov + i, n);
+        IoResult rc = co_await io::writev(fd, iov + i, n);
         if (rc < 0) co_return rc;
         if (rc == 0) co_return -EIO;  // no progress; avoid spinning
         total += rc;
@@ -169,34 +178,34 @@ coro::CoroTask<ssize_t> writev_all(int fd, struct iovec* iov, int iovcnt) {
     co_return total;
 }
 
-IoAwaitable preadv(int fd, const struct iovec* iov, int iovcnt,
-                   off_t offset) noexcept {
+IoAwaitable preadv(int fd, const IoVec* iov, int iovcnt,
+                   FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_preadv>(
-        [](int f, const struct iovec* v, int c, off_t o) {
+        [](int f, const IoVec* v, int c, FileOffset o) {
             return ::preadv(f, v, c, o);
         },
         fd, iov, iovcnt, offset);
 }
 
-IoAwaitable pwritev(int fd, const struct iovec* iov, int iovcnt,
-                    off_t offset) noexcept {
+IoAwaitable pwritev(int fd, const IoVec* iov, int iovcnt,
+                    FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pwritev>(
-        [](int f, const struct iovec* v, int c, off_t o) {
+        [](int f, const IoVec* v, int c, FileOffset o) {
             return ::pwritev(f, v, c, o);
         },
         fd, iov, iovcnt, offset);
 }
 
-IoAwaitable lseek(int fd, off_t offset, int whence) noexcept {
+IoAwaitable lseek(int fd, FileOffset offset, int whence) noexcept {
     return io_dispatch<&IoBackend::submit_lseek>(
-        [](int f, off_t o, int w) { return ::lseek(f, o, w); }, fd, offset,
-        whence);
+        [](int f, FileOffset o, int w) { return file_ops::seek(f, o, w); }, fd,
+        offset, whence);
 }
 
-IoAwaitable sendfile(int out_fd, int in_fd, off_t offset,
+IoAwaitable sendfile(int out_fd, int in_fd, FileOffset offset,
                      std::size_t count) noexcept {
     return io_dispatch<&IoBackend::submit_sendfile>(
-        [](int of, int inf, off_t o, std::size_t c) {
+        [](int of, int inf, FileOffset o, std::size_t c) {
             return platform_sendfile(of, inf, o, c);
         },
         out_fd, in_fd, offset, count);

@@ -2,18 +2,14 @@
 #define DFTRACER_UTILS_CORE_IO_IO_BACKEND_H
 
 #include <dftracer/utils/core/io/awaitable.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/uio.h>
+#include <dftracer/utils/core/io/types.h>
 
 #include <cstddef>
 #include <string>
 
 namespace dftracer::utils::io {
 
-using IoCompletionFn = void (*)(void *context, ssize_t result) noexcept;
+using IoCompletionFn = void (*)(void *context, IoResult result) noexcept;
 
 /// Backend selection preference.
 enum class IoBackendType {
@@ -38,29 +34,30 @@ class IoBackend {
     /// Stop the backend (join completion thread, drain pending ops)
     virtual void stop() = 0;
 
-    /// Submit an async sequential read. Works on any fd type.
+    /// Submit an async sequential read on a file descriptor.
     virtual IoAwaitable submit_read(int fd, void *buf, std::size_t len) = 0;
 
-    /// Submit an async sequential write. Works on any fd type.
+    /// Submit an async sequential write on a file descriptor.
     virtual IoAwaitable submit_write(int fd, const void *buf,
                                      std::size_t len) = 0;
 
     /// Submit an async positional read. Only seekable fds.
     virtual IoAwaitable submit_pread(int fd, void *buf, std::size_t len,
-                                     off_t offset) = 0;
+                                     FileOffset offset) = 0;
 
     /// Submit an async positional read with a completion callback.
     /// The callback receives either a byte count or a negative errno.
     virtual void submit_pread_callback(int fd, void *buf, std::size_t len,
-                                       off_t offset, IoCompletionFn completion,
+                                       FileOffset offset,
+                                       IoCompletionFn completion,
                                        void *context) = 0;
 
     /// Submit an async positional write. Only seekable fds.
     virtual IoAwaitable submit_pwrite(int fd, const void *buf, std::size_t len,
-                                      off_t offset) = 0;
+                                      FileOffset offset) = 0;
     /// Submit an async open operation.
     virtual IoAwaitable submit_open(const char *path, int flags,
-                                    mode_t mode) = 0;
+                                    FileMode mode) = 0;
 
     /// Submit an async close operation.
     virtual IoAwaitable submit_close(int fd) = 0;
@@ -69,32 +66,31 @@ class IoBackend {
     virtual IoAwaitable submit_fsync(int fd) = 0;
 
     /// Submit an async ftruncate operation.
-    virtual IoAwaitable submit_ftruncate(int fd, off_t length) = 0;
+    virtual IoAwaitable submit_ftruncate(int fd, FileOffset length) = 0;
 
     /// Submit an async fstat operation.
-    virtual IoAwaitable submit_fstat(int fd, struct stat *buf) = 0;
+    virtual IoAwaitable submit_fstat(int fd, FileStat *buf) = 0;
 
     /// Scatter-gather sequential read. Works on any fd type.
-    virtual IoAwaitable submit_readv(int fd, const struct iovec *iov,
-                                     int iovcnt) = 0;
+    virtual IoAwaitable submit_readv(int fd, const IoVec *iov, int iovcnt) = 0;
 
     /// Scatter-gather sequential write. Works on any fd type.
-    virtual IoAwaitable submit_writev(int fd, const struct iovec *iov,
-                                      int iovcnt) = 0;
+    virtual IoAwaitable submit_writev(int fd, const IoVec *iov, int iovcnt) = 0;
 
     /// Scatter-gather positional read. Only seekable fds.
-    virtual IoAwaitable submit_preadv(int fd, const struct iovec *iov,
-                                      int iovcnt, off_t offset) = 0;
+    virtual IoAwaitable submit_preadv(int fd, const IoVec *iov, int iovcnt,
+                                      FileOffset offset) = 0;
 
     /// Scatter-gather positional write. Only seekable fds.
-    virtual IoAwaitable submit_pwritev(int fd, const struct iovec *iov,
-                                       int iovcnt, off_t offset) = 0;
+    virtual IoAwaitable submit_pwritev(int fd, const IoVec *iov, int iovcnt,
+                                       FileOffset offset) = 0;
 
     /// Reposition file offset. Returns new offset.
-    virtual IoAwaitable submit_lseek(int fd, off_t offset, int whence) = 0;
+    virtual IoAwaitable submit_lseek(int fd, FileOffset offset, int whence) = 0;
 
     /// Zero-copy transfer from in_fd to out_fd. Returns bytes sent.
-    virtual IoAwaitable submit_sendfile(int out_fd, int in_fd, off_t offset,
+    virtual IoAwaitable submit_sendfile(int out_fd, int in_fd,
+                                        FileOffset offset,
                                         std::size_t count) = 0;
 
     /// Non-blocking poll for completions. Called by idle workers.
@@ -114,35 +110,37 @@ class IoBackend {
 
     /// Accept a connection on a listening socket.
     /// Returns the new client fd via IoAwaitable::result_.
-    virtual IoAwaitable submit_accept(int listen_fd, struct sockaddr *addr,
-                                      socklen_t *addrlen) = 0;
+    virtual IoAwaitable submit_accept(SocketHandle listen_fd,
+                                      struct sockaddr *addr,
+                                      SocketLength *addrlen) = 0;
 
     /// Receive data from a connected socket.
     /// Returns bytes received via IoAwaitable::result_.
-    virtual IoAwaitable submit_recv(int fd, void *buf, std::size_t len,
+    virtual IoAwaitable submit_recv(SocketHandle fd, void *buf, std::size_t len,
                                     int flags) = 0;
 
     /// Send data to a connected socket.
     /// Returns bytes sent via IoAwaitable::result_.
-    virtual IoAwaitable submit_send(int fd, const void *buf, std::size_t len,
-                                    int flags) = 0;
+    virtual IoAwaitable submit_send(SocketHandle fd, const void *buf,
+                                    std::size_t len, int flags) = 0;
 
     /// Blocking read -- for contexts that cannot co_await (e.g., VFS).
     /// Submits through the normal async path and blocks until done.
-    ssize_t submit_read_sync(int fd, void *buf, std::size_t len, off_t offset);
+    IoResult submit_read_sync(int fd, void *buf, std::size_t len,
+                              FileOffset offset);
 
     /// Blocking write.
-    ssize_t submit_write_sync(int fd, const void *buf, std::size_t len,
-                              off_t offset);
+    IoResult submit_write_sync(int fd, const void *buf, std::size_t len,
+                               FileOffset offset);
 
     /// Blocking fsync.
     int submit_fsync_sync(int fd);
 
     /// Blocking ftruncate.
-    int submit_ftruncate_sync(int fd, off_t length);
+    int submit_ftruncate_sync(int fd, FileOffset length);
 
     /// Blocking fstat.
-    int submit_fstat_sync(int fd, struct stat *buf);
+    int submit_fstat_sync(int fd, FileStat *buf);
 
     /// Human-readable name for logging.
     virtual std::string name() const = 0;

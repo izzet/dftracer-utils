@@ -5,8 +5,6 @@
 #include <dftracer/utils/core/io/io_backend.h>
 #include <dftracer/utils/core/io/io_op.h>
 #include <dftracer/utils/core/io/io_thread_pool.h>
-#include <sys/stat.h>
-#include <sys/uio.h>
 
 #include <cstddef>
 #include <string>
@@ -29,17 +27,18 @@ struct IoRequest : SubmitContext {
 
     IoOp op = IoOp::READ;
     int fd = -1;
+    SocketHandle socket_fd = static_cast<SocketHandle>(-1);
     void* buf = nullptr;
     std::size_t len = 0;
-    off_t offset = 0;
+    FileOffset offset = 0;
     const char* path = nullptr;
     int flags = 0;
-    mode_t mode = 0;
-    struct stat* stat_buf = nullptr;
+    FileMode mode = 0;
+    FileStat* stat_buf = nullptr;
     struct sockaddr* addr = nullptr;
-    socklen_t* addrlen = nullptr;
+    SocketLength* addrlen = nullptr;
     int msg_flags = 0;
-    const struct iovec* iov = nullptr;
+    const IoVec* iov = nullptr;
     int iovcnt = 0;
     int whence = 0;
     int dest_fd = -1;
@@ -63,33 +62,32 @@ class ThreadPoolFileOps : public IoBackend {
     IoAwaitable submit_read(int fd, void* buf, std::size_t len) override;
     IoAwaitable submit_write(int fd, const void* buf, std::size_t len) override;
     IoAwaitable submit_pread(int fd, void* buf, std::size_t len,
-                             off_t offset) override;
-    void submit_pread_callback(int fd, void* buf, std::size_t len, off_t offset,
-                               IoCompletionFn completion,
+                             FileOffset offset) override;
+    void submit_pread_callback(int fd, void* buf, std::size_t len,
+                               FileOffset offset, IoCompletionFn completion,
                                void* context) override;
     IoAwaitable submit_pwrite(int fd, const void* buf, std::size_t len,
-                              off_t offset) override;
-    IoAwaitable submit_open(const char* path, int flags, mode_t mode) override;
+                              FileOffset offset) override;
+    IoAwaitable submit_open(const char* path, int flags,
+                            FileMode mode) override;
     IoAwaitable submit_close(int fd) override;
     IoAwaitable submit_fsync(int fd) override;
-    IoAwaitable submit_ftruncate(int fd, off_t length) override;
-    IoAwaitable submit_fstat(int fd, struct stat* buf) override;
-    IoAwaitable submit_accept(int listen_fd, struct sockaddr* addr,
-                              socklen_t* addrlen) override;
-    IoAwaitable submit_recv(int fd, void* buf, std::size_t len,
+    IoAwaitable submit_ftruncate(int fd, FileOffset length) override;
+    IoAwaitable submit_fstat(int fd, FileStat* buf) override;
+    IoAwaitable submit_accept(SocketHandle listen_fd, struct sockaddr* addr,
+                              SocketLength* addrlen) override;
+    IoAwaitable submit_recv(SocketHandle fd, void* buf, std::size_t len,
                             int flags) override;
-    IoAwaitable submit_send(int fd, const void* buf, std::size_t len,
+    IoAwaitable submit_send(SocketHandle fd, const void* buf, std::size_t len,
                             int flags) override;
-    IoAwaitable submit_readv(int fd, const struct iovec* iov,
-                             int iovcnt) override;
-    IoAwaitable submit_writev(int fd, const struct iovec* iov,
-                              int iovcnt) override;
-    IoAwaitable submit_preadv(int fd, const struct iovec* iov, int iovcnt,
-                              off_t offset) override;
-    IoAwaitable submit_pwritev(int fd, const struct iovec* iov, int iovcnt,
-                               off_t offset) override;
-    IoAwaitable submit_lseek(int fd, off_t offset, int whence) override;
-    IoAwaitable submit_sendfile(int out_fd, int in_fd, off_t offset,
+    IoAwaitable submit_readv(int fd, const IoVec* iov, int iovcnt) override;
+    IoAwaitable submit_writev(int fd, const IoVec* iov, int iovcnt) override;
+    IoAwaitable submit_preadv(int fd, const IoVec* iov, int iovcnt,
+                              FileOffset offset) override;
+    IoAwaitable submit_pwritev(int fd, const IoVec* iov, int iovcnt,
+                               FileOffset offset) override;
+    IoAwaitable submit_lseek(int fd, FileOffset offset, int whence) override;
+    IoAwaitable submit_sendfile(int out_fd, int in_fd, FileOffset offset,
                                 std::size_t count) override;
 
     /// Thread-pool backends complete via callbacks; nothing to reap.
@@ -112,9 +110,9 @@ class ThreadPoolFileOps : public IoBackend {
     /// Allocate and initialize an IoRequest for the common scalar ops.
     /// Op-specific fields are post-configured by the caller.
     static IoAwaitable make_request(IoOp op, int fd, void* buf, std::size_t len,
-                                    off_t offset, const char* path, int flags,
-                                    mode_t mode, Executor* executor,
-                                    IoThreadPool* pool);
+                                    FileOffset offset, const char* path,
+                                    int flags, FileMode mode,
+                                    Executor* executor, IoThreadPool* pool);
 
    protected:
     Executor& executor_;

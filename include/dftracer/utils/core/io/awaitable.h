@@ -1,8 +1,7 @@
 #ifndef DFTRACER_UTILS_CORE_IO_AWAITABLE_H
 #define DFTRACER_UTILS_CORE_IO_AWAITABLE_H
 
-#include <fcntl.h>
-#include <sys/types.h>
+#include <dftracer/utils/core/io/types.h>
 
 #include <coroutine>
 #include <cstddef>
@@ -25,7 +24,7 @@ struct SubmitContext {
 /// fd for open, 0 for close) or a negative errno on failure.
 struct IoAwaitable {
     /// Set by the backend when the operation completes
-    ssize_t result_ = 0;
+    IoResult result_ = 0;
 
     /// Coroutine handle to resume on completion
     std::coroutine_handle<> handle_{};
@@ -45,10 +44,10 @@ struct IoAwaitable {
     /// Declared here, defined in io_awaitable.cpp
     void await_suspend(std::coroutine_handle<> h) noexcept;
 
-    ssize_t await_resume() const noexcept { return result_; }
+    IoResult await_resume() const noexcept { return result_; }
 
     /// Create an already-completed awaitable (for sync fallback)
-    static IoAwaitable ready(ssize_t result) noexcept {
+    static IoAwaitable ready(IoResult result) noexcept {
         IoAwaitable a;
         a.result_ = result;
         a.ready_ = true;

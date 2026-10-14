@@ -70,6 +70,7 @@ set(DFTRACER_UTILS_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/coro/yield.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/coro/task_abi.cpp
     # Async I/O
+    ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/io/file_ops.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/io/io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/io/io_awaitable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/core/io/io_thread_pool.cpp

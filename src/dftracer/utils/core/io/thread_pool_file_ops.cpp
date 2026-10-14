@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/io/file_ops.h>
 #include <dftracer/utils/core/io/io_sendfile.h>
 #include <dftracer/utils/core/io/thread_pool_file_ops.h>
 #include <dftracer/utils/core/pipeline/executor.h>
@@ -23,9 +24,9 @@ ThreadPoolFileOps::ThreadPoolFileOps(Executor& executor, std::size_t pool_size,
     : executor_(executor), pool_(pool_size, batch_threshold) {}
 
 IoAwaitable ThreadPoolFileOps::make_request(IoOp op, int fd, void* buf,
-                                            std::size_t len, off_t offset,
+                                            std::size_t len, FileOffset offset,
                                             const char* path, int flags,
-                                            mode_t mode, Executor* executor,
+                                            FileMode mode, Executor* executor,
                                             IoThreadPool* pool) {
     auto* req = new IoRequest{};
     req->submit = &ThreadPoolFileOps::submit_to_pool;
@@ -61,13 +62,14 @@ IoAwaitable ThreadPoolFileOps::submit_write(int fd, const void* buf,
 }
 
 IoAwaitable ThreadPoolFileOps::submit_pread(int fd, void* buf, std::size_t len,
-                                            off_t offset) {
+                                            FileOffset offset) {
     return make_request(IoOp::PREAD, fd, buf, len, offset, nullptr, 0, 0,
                         &executor_, &pool_);
 }
 
 void ThreadPoolFileOps::submit_pread_callback(int fd, void* buf,
-                                              std::size_t len, off_t offset,
+                                              std::size_t len,
+                                              FileOffset offset,
                                               IoCompletionFn completion,
                                               void* context) {
     auto* req = new IoRequest{};
@@ -84,13 +86,14 @@ void ThreadPoolFileOps::submit_pread_callback(int fd, void* buf,
 }
 
 IoAwaitable ThreadPoolFileOps::submit_pwrite(int fd, const void* buf,
-                                             std::size_t len, off_t offset) {
+                                             std::size_t len,
+                                             FileOffset offset) {
     return make_request(IoOp::PWRITE, fd, const_cast<void*>(buf), len, offset,
                         nullptr, 0, 0, &executor_, &pool_);
 }
 
 IoAwaitable ThreadPoolFileOps::submit_open(const char* path, int flags,
-                                           mode_t mode) {
+                                           FileMode mode) {
     return make_request(IoOp::OPEN, -1, nullptr, 0, 0, path, flags, mode,
                         &executor_, &pool_);
 }
@@ -105,12 +108,12 @@ IoAwaitable ThreadPoolFileOps::submit_fsync(int fd) {
                         &executor_, &pool_);
 }
 
-IoAwaitable ThreadPoolFileOps::submit_ftruncate(int fd, off_t length) {
+IoAwaitable ThreadPoolFileOps::submit_ftruncate(int fd, FileOffset length) {
     return make_request(IoOp::FTRUNCATE, fd, nullptr, 0, length, nullptr, 0, 0,
                         &executor_, &pool_);
 }
 
-IoAwaitable ThreadPoolFileOps::submit_fstat(int fd, struct stat* buf) {
+IoAwaitable ThreadPoolFileOps::submit_fstat(int fd, FileStat* buf) {
     auto req_awaitable = make_request(IoOp::FSTAT, fd, nullptr, 0, 0, nullptr,
                                       0, 0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
@@ -118,37 +121,40 @@ IoAwaitable ThreadPoolFileOps::submit_fstat(int fd, struct stat* buf) {
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_accept(int listen_fd,
+IoAwaitable ThreadPoolFileOps::submit_accept(SocketHandle listen_fd,
                                              struct sockaddr* addr,
-                                             socklen_t* addrlen) {
-    auto req_awaitable = make_request(IoOp::ACCEPT, listen_fd, nullptr, 0, 0,
-                                      nullptr, 0, 0, &executor_, &pool_);
+                                             SocketLength* addrlen) {
+    auto req_awaitable = make_request(IoOp::ACCEPT, -1, nullptr, 0, 0, nullptr,
+                                      0, 0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
+    req->socket_fd = listen_fd;
     req->addr = addr;
     req->addrlen = addrlen;
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_recv(int fd, void* buf, std::size_t len,
-                                           int flags) {
-    auto req_awaitable = make_request(IoOp::RECV, fd, buf, len, 0, nullptr, 0,
+IoAwaitable ThreadPoolFileOps::submit_recv(SocketHandle fd, void* buf,
+                                           std::size_t len, int flags) {
+    auto req_awaitable = make_request(IoOp::RECV, -1, buf, len, 0, nullptr, 0,
                                       0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
+    req->socket_fd = fd;
     req->msg_flags = flags;
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_send(int fd, const void* buf,
+IoAwaitable ThreadPoolFileOps::submit_send(SocketHandle fd, const void* buf,
                                            std::size_t len, int flags) {
     auto req_awaitable =
-        make_request(IoOp::SEND, fd, const_cast<void*>(buf), len, 0, nullptr, 0,
+        make_request(IoOp::SEND, -1, const_cast<void*>(buf), len, 0, nullptr, 0,
                      0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
+    req->socket_fd = fd;
     req->msg_flags = flags;
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_readv(int fd, const struct iovec* iov,
+IoAwaitable ThreadPoolFileOps::submit_readv(int fd, const IoVec* iov,
                                             int iovcnt) {
     auto req_awaitable = make_request(IoOp::READV, fd, nullptr, 0, 0, nullptr,
                                       0, 0, &executor_, &pool_);
@@ -158,7 +164,7 @@ IoAwaitable ThreadPoolFileOps::submit_readv(int fd, const struct iovec* iov,
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_writev(int fd, const struct iovec* iov,
+IoAwaitable ThreadPoolFileOps::submit_writev(int fd, const IoVec* iov,
                                              int iovcnt) {
     auto req_awaitable = make_request(IoOp::WRITEV, fd, nullptr, 0, 0, nullptr,
                                       0, 0, &executor_, &pool_);
@@ -168,8 +174,8 @@ IoAwaitable ThreadPoolFileOps::submit_writev(int fd, const struct iovec* iov,
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_preadv(int fd, const struct iovec* iov,
-                                             int iovcnt, off_t offset) {
+IoAwaitable ThreadPoolFileOps::submit_preadv(int fd, const IoVec* iov,
+                                             int iovcnt, FileOffset offset) {
     auto req_awaitable = make_request(IoOp::PREADV, fd, nullptr, 0, offset,
                                       nullptr, 0, 0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
@@ -178,8 +184,8 @@ IoAwaitable ThreadPoolFileOps::submit_preadv(int fd, const struct iovec* iov,
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_pwritev(int fd, const struct iovec* iov,
-                                              int iovcnt, off_t offset) {
+IoAwaitable ThreadPoolFileOps::submit_pwritev(int fd, const IoVec* iov,
+                                              int iovcnt, FileOffset offset) {
     auto req_awaitable = make_request(IoOp::PWRITEV, fd, nullptr, 0, offset,
                                       nullptr, 0, 0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
@@ -188,7 +194,8 @@ IoAwaitable ThreadPoolFileOps::submit_pwritev(int fd, const struct iovec* iov,
     return req_awaitable;
 }
 
-IoAwaitable ThreadPoolFileOps::submit_lseek(int fd, off_t offset, int whence) {
+IoAwaitable ThreadPoolFileOps::submit_lseek(int fd, FileOffset offset,
+                                            int whence) {
     auto req_awaitable = make_request(IoOp::LSEEK, fd, nullptr, 0, offset,
                                       nullptr, 0, 0, &executor_, &pool_);
     auto* req = static_cast<IoRequest*>(req_awaitable.submit_ctx_);
@@ -197,7 +204,7 @@ IoAwaitable ThreadPoolFileOps::submit_lseek(int fd, off_t offset, int whence) {
 }
 
 IoAwaitable ThreadPoolFileOps::submit_sendfile(int out_fd, int in_fd,
-                                               off_t offset,
+                                               FileOffset offset,
                                                std::size_t count) {
     auto req_awaitable =
         make_request(IoOp::SENDFILE, in_fd, nullptr, count, offset, nullptr, 0,
@@ -218,41 +225,41 @@ void ThreadPoolFileOps::submit_to_pool(SubmitContext* ctx,
 }
 
 void ThreadPoolFileOps::execute_request(IoRequest* req) {
-    ssize_t result = 0;
+    IoResult result = 0;
     switch (req->op) {
         case IoOp::READ:
-            result = ::read(req->fd, req->buf, req->len);
+            result = file_ops::read(req->fd, req->buf, req->len);
             break;
         case IoOp::WRITE:
-            result = ::write(req->fd, req->buf, req->len);
+            result = file_ops::write(req->fd, req->buf, req->len);
             break;
         case IoOp::PREAD:
-            result = ::pread(req->fd, req->buf, req->len, req->offset);
+            result = file_ops::pread(req->fd, req->buf, req->len, req->offset);
             break;
         case IoOp::PWRITE:
-            result = ::pwrite(req->fd, req->buf, req->len, req->offset);
+            result = file_ops::pwrite(req->fd, req->buf, req->len, req->offset);
             break;
         case IoOp::OPEN:
-            result = ::open(req->path, req->flags, req->mode);
+            result = file_ops::open(req->path, req->flags, req->mode);
             break;
         case IoOp::CLOSE:
-            result = ::close(req->fd);
+            result = file_ops::close(req->fd);
             break;
         case IoOp::FSYNC:
-            result = ::fsync(req->fd);
+            result = file_ops::fsync(req->fd);
             break;
         case IoOp::FTRUNCATE:
-            result = ::ftruncate(req->fd, req->offset);
+            result = file_ops::truncate(req->fd, req->offset);
             break;
         case IoOp::FSTAT:
-            result = ::fstat(req->fd, req->stat_buf);
+            result = file_ops::stat_fd(req->fd, req->stat_buf);
             break;
         case IoOp::ACCEPT:
 #ifdef __linux__
-            result = ::accept4(req->fd, req->addr, req->addrlen,
+            result = ::accept4(req->socket_fd, req->addr, req->addrlen,
                                SOCK_NONBLOCK | SOCK_CLOEXEC);
 #else
-            result = ::accept(req->fd, req->addr, req->addrlen);
+            result = ::accept(req->socket_fd, req->addr, req->addrlen);
             if (result >= 0) {
                 int fd = static_cast<int>(result);
                 int fl = ::fcntl(fd, F_GETFL, 0);
@@ -262,10 +269,10 @@ void ThreadPoolFileOps::execute_request(IoRequest* req) {
 #endif
             break;
         case IoOp::RECV:
-            result = ::recv(req->fd, req->buf, req->len, req->msg_flags);
+            result = ::recv(req->socket_fd, req->buf, req->len, req->msg_flags);
             break;
         case IoOp::SEND:
-            result = ::send(req->fd, req->buf, req->len, req->msg_flags);
+            result = ::send(req->socket_fd, req->buf, req->len, req->msg_flags);
             break;
         case IoOp::READV:
             result = ::readv(req->fd, req->iov, req->iovcnt);
@@ -280,7 +287,7 @@ void ThreadPoolFileOps::execute_request(IoRequest* req) {
             result = ::pwritev(req->fd, req->iov, req->iovcnt, req->offset);
             break;
         case IoOp::LSEEK:
-            result = ::lseek(req->fd, req->offset, req->whence);
+            result = file_ops::seek(req->fd, req->offset, req->whence);
             break;
         case IoOp::SENDFILE:
             result =

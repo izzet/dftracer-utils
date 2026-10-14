@@ -1,4 +1,4 @@
-#include <dftracer/utils/core/io/file_ops.h>
+#include <dftracer/utils/core/io/platform_io.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-namespace dftracer::utils::io::file_ops {
+namespace dftracer::utils::io::platform_io {
 
 #ifdef _WIN32
 namespace {
@@ -359,4 +359,4 @@ int stat_fd(int fd, FileStat* buf) noexcept {
 #endif
 }
 
-}  // namespace dftracer::utils::io::file_ops
+}  // namespace dftracer::utils::io::platform_io

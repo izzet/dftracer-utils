@@ -1,12 +1,12 @@
-#ifndef DFTRACER_UTILS_CORE_IO_FILE_OPS_H
-#define DFTRACER_UTILS_CORE_IO_FILE_OPS_H
+#ifndef DFTRACER_UTILS_CORE_IO_PLATFORM_IO_H
+#define DFTRACER_UTILS_CORE_IO_PLATFORM_IO_H
 
 #include <dftracer/utils/core/io/types.h>
 #include <fcntl.h>
 
-namespace dftracer::utils::io::file_ops {
+namespace dftracer::utils::io::platform_io {
 
-// Blocking file operations for synchronous callers and thread-pool backends.
+// Internal blocking I/O implementation shared by the facade and backends.
 // Failures return -1 and set errno, matching the POSIX calls they replace.
 // Paths use UTF-8 on Windows; files opened here use binary I/O there.
 int open(const char* path, int flags, FileMode mode = 0644) noexcept;
@@ -25,6 +25,6 @@ int truncate(int fd, FileOffset length) noexcept;
 FileOffset seek(int fd, FileOffset offset, int whence) noexcept;
 int stat_fd(int fd, FileStat* buf) noexcept;
 
-}  // namespace dftracer::utils::io::file_ops
+}  // namespace dftracer::utils::io::platform_io
 
-#endif  // DFTRACER_UTILS_CORE_IO_FILE_OPS_H
+#endif  // DFTRACER_UTILS_CORE_IO_PLATFORM_IO_H

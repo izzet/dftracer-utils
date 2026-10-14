@@ -1,7 +1,7 @@
-#include <dftracer/utils/core/io/file_ops.h>
 #include <dftracer/utils/core/io/io_backend.h>
 #include <dftracer/utils/core/io/io_sendfile.h>
 #include <dftracer/utils/core/io/ops.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/core/pipeline/executor.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -55,14 +55,16 @@ IoAwaitable io_dispatch(Sync sync, Args... args) noexcept {
 
 IoAwaitable read(int fd, void* buf, std::size_t len) noexcept {
     return io_dispatch<&IoBackend::submit_read>(
-        [](int f, void* b, std::size_t n) { return file_ops::read(f, b, n); },
+        [](int f, void* b, std::size_t n) {
+            return platform_io::read(f, b, n);
+        },
         fd, buf, len);
 }
 
 IoAwaitable write(int fd, const void* buf, std::size_t len) noexcept {
     return io_dispatch<&IoBackend::submit_write>(
         [](int f, const void* b, std::size_t n) {
-            return file_ops::write(f, b, n);
+            return platform_io::write(f, b, n);
         },
         fd, buf, len);
 }
@@ -71,7 +73,7 @@ IoAwaitable pread(int fd, void* buf, std::size_t len,
                   FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pread>(
         [](int f, void* b, std::size_t n, FileOffset o) {
-            return file_ops::pread(f, b, n, o);
+            return platform_io::pread(f, b, n, o);
         },
         fd, buf, len, offset);
 }
@@ -80,7 +82,7 @@ IoAwaitable pwrite(int fd, const void* buf, std::size_t len,
                    FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pwrite>(
         [](int f, const void* b, std::size_t n, FileOffset o) {
-            return file_ops::pwrite(f, b, n, o);
+            return platform_io::pwrite(f, b, n, o);
         },
         fd, buf, len, offset);
 }
@@ -88,30 +90,30 @@ IoAwaitable pwrite(int fd, const void* buf, std::size_t len,
 IoAwaitable open(const char* path, int flags, FileMode mode) noexcept {
     return io_dispatch<&IoBackend::submit_open>(
         [](const char* p, int fl, FileMode m) {
-            return file_ops::open(p, fl, m);
+            return platform_io::open(p, fl, m);
         },
         path, flags, mode);
 }
 
 IoAwaitable close(int fd) noexcept {
     return io_dispatch<&IoBackend::submit_close>(
-        [](int f) { return file_ops::close(f); }, fd);
+        [](int f) { return platform_io::close(f); }, fd);
 }
 
 IoAwaitable fsync(int fd) noexcept {
     return io_dispatch<&IoBackend::submit_fsync>(
-        [](int f) { return file_ops::fsync(f); }, fd);
+        [](int f) { return platform_io::fsync(f); }, fd);
 }
 
 IoAwaitable ftruncate(int fd, FileOffset length) noexcept {
     return io_dispatch<&IoBackend::submit_ftruncate>(
-        [](int f, FileOffset l) { return file_ops::truncate(f, l); }, fd,
+        [](int f, FileOffset l) { return platform_io::truncate(f, l); }, fd,
         length);
 }
 
 IoAwaitable fstat(int fd, FileStat* buf) noexcept {
     return io_dispatch<&IoBackend::submit_fstat>(
-        [](int f, FileStat* b) { return file_ops::stat_fd(f, b); }, fd, buf);
+        [](int f, FileStat* b) { return platform_io::stat_fd(f, b); }, fd, buf);
 }
 
 IoAwaitable accept(SocketHandle listen_fd, struct sockaddr* addr,
@@ -198,8 +200,8 @@ IoAwaitable pwritev(int fd, const IoVec* iov, int iovcnt,
 
 IoAwaitable lseek(int fd, FileOffset offset, int whence) noexcept {
     return io_dispatch<&IoBackend::submit_lseek>(
-        [](int f, FileOffset o, int w) { return file_ops::seek(f, o, w); }, fd,
-        offset, whence);
+        [](int f, FileOffset o, int w) { return platform_io::seek(f, o, w); },
+        fd, offset, whence);
 }
 
 IoAwaitable sendfile(int out_fd, int in_fd, FileOffset offset,

@@ -1,5 +1,5 @@
-#include <dftracer/utils/core/io/file_ops.h>
 #include <dftracer/utils/core/io/io_sendfile.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/core/io/thread_pool_file_ops.h>
 #include <dftracer/utils/core/pipeline/executor.h>
 #include <fcntl.h>
@@ -228,31 +228,33 @@ void ThreadPoolFileOps::execute_request(IoRequest* req) {
     IoResult result = 0;
     switch (req->op) {
         case IoOp::READ:
-            result = file_ops::read(req->fd, req->buf, req->len);
+            result = platform_io::read(req->fd, req->buf, req->len);
             break;
         case IoOp::WRITE:
-            result = file_ops::write(req->fd, req->buf, req->len);
+            result = platform_io::write(req->fd, req->buf, req->len);
             break;
         case IoOp::PREAD:
-            result = file_ops::pread(req->fd, req->buf, req->len, req->offset);
+            result =
+                platform_io::pread(req->fd, req->buf, req->len, req->offset);
             break;
         case IoOp::PWRITE:
-            result = file_ops::pwrite(req->fd, req->buf, req->len, req->offset);
+            result =
+                platform_io::pwrite(req->fd, req->buf, req->len, req->offset);
             break;
         case IoOp::OPEN:
-            result = file_ops::open(req->path, req->flags, req->mode);
+            result = platform_io::open(req->path, req->flags, req->mode);
             break;
         case IoOp::CLOSE:
-            result = file_ops::close(req->fd);
+            result = platform_io::close(req->fd);
             break;
         case IoOp::FSYNC:
-            result = file_ops::fsync(req->fd);
+            result = platform_io::fsync(req->fd);
             break;
         case IoOp::FTRUNCATE:
-            result = file_ops::truncate(req->fd, req->offset);
+            result = platform_io::truncate(req->fd, req->offset);
             break;
         case IoOp::FSTAT:
-            result = file_ops::stat_fd(req->fd, req->stat_buf);
+            result = platform_io::stat_fd(req->fd, req->stat_buf);
             break;
         case IoOp::ACCEPT:
 #ifdef __linux__
@@ -287,7 +289,7 @@ void ThreadPoolFileOps::execute_request(IoRequest* req) {
             result = ::pwritev(req->fd, req->iov, req->iovcnt, req->offset);
             break;
         case IoOp::LSEEK:
-            result = file_ops::seek(req->fd, req->offset, req->whence);
+            result = platform_io::seek(req->fd, req->offset, req->whence);
             break;
         case IoOp::SENDFILE:
             result =

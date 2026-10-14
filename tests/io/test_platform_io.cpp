@@ -1,6 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <dftracer/utils/core/io/awaitable.h>
-#include <dftracer/utils/core/io/file_ops.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #include <doctest/doctest.h>
 
 #include <array>
@@ -23,7 +23,7 @@
 #endif
 
 namespace aio = dftracer::utils::io;
-namespace files = dftracer::utils::io::file_ops;
+namespace files = dftracer::utils::io::platform_io;
 namespace fs = std::filesystem;
 
 namespace {
@@ -40,7 +40,7 @@ class TemporaryDirectory {
         const auto stamp =
             std::chrono::steady_clock::now().time_since_epoch().count();
         path = fs::temp_directory_path() /
-               ("dftu_file_ops_" + std::to_string(stamp) + "_" +
+               ("dftu_platform_io_" + std::to_string(stamp) + "_" +
                 std::to_string(counter.fetch_add(1)));
         if (!fs::create_directory(path))
             throw std::runtime_error(

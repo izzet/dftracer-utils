@@ -100,6 +100,7 @@ set(TEST_CPP_SOURCES
     core/test_spill_dir.cpp
     core/test_str_format.cpp
     core/test_bits.cpp
+    core/test_platform_compat.cpp
     core/test_object_pool.cpp
     # Pipeline tests
     pipeline/test_pipeline.cpp

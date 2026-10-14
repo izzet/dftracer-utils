@@ -7,6 +7,10 @@
 // Windows specific includes and definitions
 #include <fcntl.h>
 #include <io.h>
+// Load the CRT declarations before defining aliases so they cannot rewrite
+// function declarations or turn struct stat into a second _stat64.
+#include <stdio.h>
+#include <sys/stat.h>
 
 // Map POSIX functions to Windows equivalents
 #define fseeko _fseeki64
@@ -15,6 +19,7 @@
 #define pclose _pclose
 #define fileno _fileno
 #define stat _stat64
+#define fstat _fstat64
 
 // For large file support on Windows
 #ifndef _FILE_OFFSET_BITS

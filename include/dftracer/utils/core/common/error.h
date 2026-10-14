@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_CORE_COMMON_ERROR_H
 #define DFTRACER_UTILS_CORE_COMMON_ERROR_H
 
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/expected.h>
 #include <dftracer/utils/core/common/hash/fnv1a.h>
 #include <dftracer/utils/core/common/str_format.h>
@@ -298,8 +299,8 @@ class DFTUtilsException : public std::runtime_error {
     ///                                "Cannot open %s: errno=%d", path.c_str(),
     ///                                e);
     /// For a literal '%' in the message, escape as "%%" or use cat().
-    __attribute__((__format__(__printf__, 2, 3))) static DFTUtilsException fmt(
-        ErrorCode code, const char* format, ...) {
+    DFTRACER_UTILS_PRINTF_FORMAT(2, 3)
+    static DFTUtilsException fmt(ErrorCode code, const char* format, ...) {
         va_list ap;
         va_start(ap, format);
         std::string msg = vstring_format(format, ap);

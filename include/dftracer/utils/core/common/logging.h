@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_CORE_COMMON_LOGGING_H
 #define DFTRACER_UTILS_CORE_COMMON_LOGGING_H
 
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/config.h>
 
 #include <atomic>
@@ -57,10 +58,8 @@ inline bool enabled(Level lvl) noexcept {
 
 /// Emit one formatted line. Thread-safe without a lock: the whole line is built
 /// locally and written in a single call (stdio per-stream lock).
-__attribute__((__format__(__printf__, 4, 5))) void write(Level lvl,
-                                                         const char* file,
-                                                         int line,
-                                                         const char* fmt, ...);
+DFTRACER_UTILS_PRINTF_FORMAT(4, 5)
+void write(Level lvl, const char* file, int line, const char* fmt, ...);
 
 /// Open/close a trace scope. The returned handle lives in the ScopeTracer
 /// object so it follows a coroutine across thread migration (a thread-local
@@ -85,8 +84,9 @@ class ScopeTracer {
         if (enabled(Level::Trace)) handle_ = scope_open(file, line, func);
     }
 
-    __attribute__((__format__(__printf__, 5, 6))) ScopeTracer(
-        const char* file, int line, const char* func, const char* fmt, ...) {
+    DFTRACER_UTILS_PRINTF_FORMAT(5, 6)
+    ScopeTracer(const char* file, int line, const char* func, const char* fmt,
+                ...) {
         if (!enabled(Level::Trace)) return;
         char label[256];
         int off = std::snprintf(label, sizeof(label), "%s: ", func);

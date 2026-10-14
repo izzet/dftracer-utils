@@ -1,4 +1,5 @@
 #include <dftracer/utils/core/common/byte_view.h>
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/io/io.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
@@ -75,7 +76,7 @@ class JsonBuffer {
         size_ += static_cast<std::size_t>(n);
     }
 
-    int format(const char* fmt, ...) __attribute__((format(printf, 2, 3))) {
+    DFTRACER_UTILS_PRINTF_FORMAT(2, 3) int format(const char* fmt, ...) {
         va_list ap;
         va_start(ap, fmt);
         int n = std::vsnprintf(data_ + size_, capacity_ - size_, fmt, ap);

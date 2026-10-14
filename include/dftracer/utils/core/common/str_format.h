@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_CORE_COMMON_STR_FORMAT_H
 #define DFTRACER_UTILS_CORE_COMMON_STR_FORMAT_H
 
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/to_chars.h>
 
 #include <charconv>
@@ -71,8 +72,8 @@ std::string str_cat(const Args&... args) {
 /// literal '%' in the text, escape as "%%" (or use str_cat, which has no format
 /// string). vstring_format is the va_list core; string_format is the variadic
 /// front-end.
-__attribute__((__format__(__printf__, 1, 0))) inline std::string vstring_format(
-    const char* fmt, va_list ap) {
+DFTRACER_UTILS_PRINTF_FORMAT(1, 0)
+inline std::string vstring_format(const char* fmt, va_list ap) {
     va_list ap2;
     va_copy(ap2, ap);
     int n = std::vsnprintf(nullptr, 0, fmt, ap2);
@@ -84,8 +85,8 @@ __attribute__((__format__(__printf__, 1, 0))) inline std::string vstring_format(
     return s;
 }
 
-__attribute__((__format__(__printf__, 1, 2))) inline std::string string_format(
-    const char* fmt, ...) {
+DFTRACER_UTILS_PRINTF_FORMAT(1, 2)
+inline std::string string_format(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     std::string s = vstring_format(fmt, ap);

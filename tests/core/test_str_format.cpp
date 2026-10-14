@@ -5,6 +5,20 @@
 using dftracer::utils::parse_bytes;
 using dftracer::utils::parse_duration_seconds;
 
+TEST_SUITE("str_format::string_format") {
+    TEST_CASE("mixed arguments and a literal percent") {
+        CHECK(dftracer::utils::string_format("%s:%d:%.1f %%", "value", 42,
+                                             2.5) == "value:42:2.5 %");
+    }
+
+    TEST_CASE("empty and long output") {
+        CHECK(dftracer::utils::string_format("%s", "").empty());
+        const std::string value(4096, 'x');
+        CHECK(dftracer::utils::string_format("[%s]", value.c_str()) ==
+              "[" + value + "]");
+    }
+}
+
 TEST_SUITE("str_format::parse_bytes") {
     TEST_CASE("bare number is bytes") {
         CHECK(*parse_bytes("0") == 0);

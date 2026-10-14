@@ -9,6 +9,10 @@
 #include <new>
 #include <utility>
 
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+
 namespace dftracer::utils::dataframe {
 
 /// Aligned, reference-counted byte buffer with a polymorphic owner. Owns memory
@@ -29,12 +33,21 @@ class Buffer {
         void* p = nullptr;
         if (bytes != 0) {
             std::size_t rounded = (bytes + align - 1) & ~(align - 1);
+#ifdef _WIN32
+            p = _aligned_malloc(rounded, align);
+#else
             p = std::aligned_alloc(align, rounded);
+#endif
             if (p == nullptr) throw std::bad_alloc();
         }
         return std::shared_ptr<Buffer>(
-            new Buffer(static_cast<std::uint8_t*>(p), bytes,
-                       [](void* q) { std::free(q); }));
+            new Buffer(static_cast<std::uint8_t*>(p), bytes, [](void* q) {
+#ifdef _WIN32
+                _aligned_free(q);
+#else
+                std::free(q);
+#endif
+            }));
     }
 
     /// Wrap foreign memory; `release` runs on destruction instead of free.

@@ -2,6 +2,6 @@
 
 int main()
 {
-  std::filesystem::path p{"."};
-  return 0;
+  const auto p = std::filesystem::current_path();
+  return std::filesystem::exists(p) ? 0 : 1;
 }

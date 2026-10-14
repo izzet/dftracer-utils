@@ -2262,12 +2262,29 @@ endfunction()
 macro(check_std_filesystem)
   # Probe once and cache; try_compile otherwise re-runs a compiler every
   # reconfigure. The status message below still prints each configure.
-  if(NOT DEFINED DFTRACER_UTILS_HAS_STD_FILESYSTEM)
+  if(NOT DEFINED DFTRACER_UTILS_HAS_STD_FILESYSTEM
+     OR NOT DEFINED DFTRACER_UTILS_STD_FILESYSTEM_LIBRARIES)
     try_compile(
       _dftracer_has_std_filesystem "${CMAKE_BINARY_DIR}/temp"
       "${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/has_filesystem.cpp" CXX_STANDARD
-      ${CMAKE_CXX_STANDARD} CXX_STANDARD_REQUIRED ON
-      LINK_LIBRARIES stdc++fs)
+      ${CMAKE_CXX_STANDARD} CXX_STANDARD_REQUIRED ON)
+    set(_dftracer_filesystem_libraries "")
+    # Modern standard libraries provide filesystem without an extra library.
+    # Older libstdc++ needs stdc++fs, which is unavailable with MSVC/libc++.
+    if(NOT _dftracer_has_std_filesystem AND NOT MSVC)
+      try_compile(
+        _dftracer_has_std_filesystem_with_lib "${CMAKE_BINARY_DIR}/temp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests/has_filesystem.cpp" CXX_STANDARD
+        ${CMAKE_CXX_STANDARD} CXX_STANDARD_REQUIRED ON
+        LINK_LIBRARIES stdc++fs)
+      if(_dftracer_has_std_filesystem_with_lib)
+        set(_dftracer_has_std_filesystem TRUE)
+        set(_dftracer_filesystem_libraries stdc++fs)
+      endif()
+    endif()
+    set(DFTRACER_UTILS_STD_FILESYSTEM_LIBRARIES
+        "${_dftracer_filesystem_libraries}"
+        CACHE INTERNAL "Extra libraries required for std::filesystem")
     set(DFTRACER_UTILS_HAS_STD_FILESYSTEM
         ${_dftracer_has_std_filesystem}
         CACHE INTERNAL "Compiler provides a usable std::filesystem")
@@ -2281,8 +2298,10 @@ macro(check_std_filesystem)
 endmacro()
 
 function(add_stdfs_if_needed TARGET)
-  if(DFTRACER_UTILS_HAS_STD_FILESYSTEM)
-    target_link_libraries(${TARGET} PRIVATE stdc++fs)
+  if(DFTRACER_UTILS_HAS_STD_FILESYSTEM
+     AND DFTRACER_UTILS_STD_FILESYSTEM_LIBRARIES)
+    target_link_libraries(${TARGET} PRIVATE
+                          ${DFTRACER_UTILS_STD_FILESYSTEM_LIBRARIES})
   endif()
 endfunction()
 

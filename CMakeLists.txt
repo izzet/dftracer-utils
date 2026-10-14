@@ -242,6 +242,8 @@ if(SKBUILD)
       CACHE STRING "Include install directory" FORCE)
 endif()
 
+check_std_filesystem()
+
 if(DFTRACER_UTILS_DEBUG)
   configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/configure_files/dftracer_utils_config.dbg.h.in"
@@ -258,8 +260,6 @@ dftracer_utils_interface_versions("${CMAKE_CURRENT_SOURCE_DIR}/VERSION"
                                   "${CMAKE_BINARY_DIR}/include")
 
 set_coverage_compiler_flags(DFTRACER_UTILS_TESTS AND DFTRACER_UTILS_COVERAGE)
-
-check_std_filesystem()
 
 # Configuration summary
 dftracer_utils_section("dftracer-utils ${DFTRACER_UTILS_VERSION}")

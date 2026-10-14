@@ -465,6 +465,14 @@ function(need_rocksdb)
         PARENT_SCOPE)
   else()
     if(NOT rocksdb_ADDED)
+      set(ROCKSDB_PLATFORM_OPTIONS)
+      if(WIN32)
+        list(APPEND ROCKSDB_PLATFORM_OPTIONS "ROCKSDB_INSTALL_ON_WINDOWS ON")
+      endif()
+      if(MSVC)
+        # Use our dependency targets instead of thirdparty.inc's NuGet paths.
+        list(APPEND ROCKSDB_PLATFORM_OPTIONS "ROCKSDB_SKIP_THIRDPARTY ON")
+      endif()
       cpmaddpackage(
         NAME
         rocksdb
@@ -490,6 +498,7 @@ function(need_rocksdb)
         "WITH_BZ2 OFF"
         "USE_RTTI ON"
         "FAIL_ON_WARNINGS OFF"
+        ${ROCKSDB_PLATFORM_OPTIONS}
         FORCE
         YES)
     endif()
@@ -514,6 +523,32 @@ function(need_rocksdb)
       dftracer_utils_ok("Built RocksDB with CPM")
 
       set(ROCKSDB_LIBRARY_DIR "${CMAKE_BINARY_DIR}/lib")
+
+      if(MSVC)
+        # RocksDB's MSVC branch skips find_package for compression libraries.
+        # Keep codec support enabled and link the same targets as our engine.
+        foreach(ROCKSDB_TARGET rocksdb rocksdb-shared)
+          if(TARGET ${ROCKSDB_TARGET})
+            target_compile_definitions(${ROCKSDB_TARGET} PRIVATE ZLIB)
+            link_zlib(${ROCKSDB_TARGET} STATIC)
+            if(DFTRACER_UTILS_ENABLE_ZSTD)
+              target_compile_definitions(${ROCKSDB_TARGET}
+                                         PRIVATE ZSTD ZSTD_STATIC_LINKING_ONLY)
+              target_link_libraries(${ROCKSDB_TARGET} PRIVATE zstd::zstd)
+            endif()
+            if(DFTRACER_UTILS_ENABLE_LZ4)
+              target_compile_definitions(${ROCKSDB_TARGET} PRIVATE LZ4)
+              if(TARGET lz4_static)
+                target_link_libraries(${ROCKSDB_TARGET} PRIVATE lz4_static)
+              elseif(TARGET lz4_shared)
+                target_link_libraries(${ROCKSDB_TARGET} PRIVATE lz4_shared)
+              else()
+                target_link_libraries(${ROCKSDB_TARGET} PRIVATE lz4::lz4)
+              endif()
+            endif()
+          endif()
+        endforeach()
+      endif()
 
       if(TARGET rocksdb)
         set_target_properties(

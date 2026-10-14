@@ -9,6 +9,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <sys/sysctl.h>
@@ -166,8 +173,22 @@ static std::size_t try_darwin() {
 #endif
 }
 
+// Windows reports physical memory available to new allocations directly.
+static std::size_t try_windows() {
+#ifdef _WIN32
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    if (!GlobalMemoryStatusEx(&memory)) return 0;
+    return static_cast<std::size_t>(memory.ullAvailPhys);
+#else
+    return 0;
+#endif
+}
+
 std::size_t detect_available_memory() {
-    std::size_t avail = try_cgroups_v2();
+    std::size_t avail = try_windows();
+    if (avail > 0) return avail;
+    avail = try_cgroups_v2();
     if (avail > 0) return avail;
     avail = try_cgroups_v1();
     if (avail > 0) return avail;

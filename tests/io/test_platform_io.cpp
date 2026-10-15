@@ -1,5 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <dftracer/utils/core/io/awaitable.h>
+#include <dftracer/utils/core/io/io_sendfile.h>
 #include <dftracer/utils/core/io/platform_io.h>
 #include <doctest/doctest.h>
 
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -19,6 +21,7 @@
 #include <io.h>
 #include <winioctl.h>
 #else
+#include <netinet/in.h>
 #include <unistd.h>
 #endif
 
@@ -128,6 +131,12 @@ TEST_CASE("offsets and descriptor stats retain positions above 4 GiB") {
     std::array<char, 5> read{};
     REQUIRE(files::pread(fd.value, read.data(), read.size(), offset) == 5);
     CHECK(std::string(read.data(), read.size()) == "large");
+    aio::IoVec parts[]{{read.data(), 2}, {read.data() + 2, 3}};
+    REQUIRE(files::pwritev(fd.value, parts, 2, offset) == 5);
+    read.fill(0);
+    REQUIRE(files::preadv(fd.value, parts, 2, offset) == 5);
+    CHECK(std::string(read.data(), read.size()) == "large");
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 0);
     REQUIRE(files::seek(fd.value, offset, SEEK_SET) == offset);
     CHECK(files::seek(fd.value, 0, SEEK_CUR) == offset);
     CHECK(files::read(fd.value, read.data(), read.size()) == 5);
@@ -353,4 +362,169 @@ TEST_CASE("positional I/O rejects pipes and negative offsets") {
     CHECK(errno == EINVAL);
     CHECK(files::pwrite(fd.value, &byte, 1, -1) == -1);
     CHECK(errno == EINVAL);
+}
+
+TEST_CASE(
+    "vectored I/O preserves ordering, short reads and sequential position") {
+    TemporaryDirectory dir;
+    const auto path = utf8_path(dir.path / "vectors.bin");
+    TestFd fd(files::open(path.c_str(), O_CREAT | O_RDWR, 0600));
+    REQUIRE(fd.value >= 0);
+    char first[] = "abc";
+    char second[] = "defg";
+    aio::IoVec output[]{{first, 3}, {nullptr, 0}, {second, 4}};
+    REQUIRE(files::writev(fd.value, output, 3) == 7);
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 7);
+    REQUIRE(files::pwritev(fd.value, output, 3, 7) == 7);
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 7);
+    char a[4]{};
+    char b[6]{};
+    aio::IoVec input[]{{a, sizeof(a)}, {nullptr, 0}, {b, sizeof(b)}};
+    REQUIRE(files::preadv(fd.value, input, 3, 8) == 6);
+    CHECK(std::string(a, 4) == "bcde");
+    CHECK(std::string(b, 2) == "fg");
+    CHECK(b[2] == 0);
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 7);
+    REQUIRE(files::readv(fd.value, input, 3) == 7);
+    CHECK(std::string(a, 4) == "abcd");
+    CHECK(std::string(b, 3) == "efg");
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 14);
+    CHECK(files::readv(fd.value, nullptr, 0) == 0);
+    CHECK(files::writev(fd.value, nullptr, 0) == 0);
+    CHECK(files::preadv(fd.value, input, 3, 14) == 0);
+    CHECK(files::readv(fd.value, input, -1) == -1);
+    CHECK(errno == EINVAL);
+    CHECK(files::writev(fd.value, input, files::iov_max_entries() + 1) == -1);
+    CHECK(errno == EINVAL);
+    CHECK(files::preadv(fd.value, input, 3, -1) == -1);
+    CHECK(errno == EINVAL);
+    CHECK(files::writev(-1, output, 3) == -1);
+    CHECK(errno == EBADF);
+#ifdef _WIN32
+    // Validate the entire request before copying or submitting anything.
+    CHECK(files::readv(fd.value, nullptr, 1) == -1);
+    CHECK(errno == EFAULT);
+    aio::IoVec overflow[]{
+        {first,
+         static_cast<std::size_t>(std::numeric_limits<aio::IoResult>::max())},
+        {second, 1}};
+    CHECK(files::writev(fd.value, overflow, 2) == -1);
+    CHECK(errno == EINVAL);
+#endif
+}
+
+#ifndef __APPLE__
+// macOS's native sendfile requires a socket destination, unlike Linux and
+// the Windows descriptor fallback.
+TEST_CASE("sendfile copies a range into a pipe without moving the input") {
+    TemporaryDirectory dir;
+    const auto path = utf8_path(dir.path / "sendfile.bin");
+    TestFd fd(files::open(path.c_str(), O_CREAT | O_RDWR, 0600));
+    REQUIRE(fd.value >= 0);
+    REQUIRE(files::write(fd.value, "0123456789", 10) == 10);
+    int descriptors[2];
+#ifdef _WIN32
+    REQUIRE(_pipe(descriptors, 4096, _O_BINARY) == 0);
+#else
+    REQUIRE(::pipe(descriptors) == 0);
+#endif
+    TestFd reader(descriptors[0]);
+    TestFd writer(descriptors[1]);
+    REQUIRE(aio::platform_sendfile(writer.value, fd.value, 2, 5) == 5);
+    char data[5]{};
+    REQUIRE(files::read(reader.value, data, sizeof(data)) == 5);
+    CHECK(std::string(data, 5) == "23456");
+    CHECK(files::seek(fd.value, 0, SEEK_CUR) == 10);
+    CHECK(aio::platform_sendfile(writer.value, fd.value, 10, 5) == 0);
+}
+#endif
+
+namespace {
+
+class SocketSession {
+   public:
+    SocketSession() {
+#ifdef _WIN32
+        WSADATA data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
+            throw std::runtime_error("cannot initialize Winsock");
+#endif
+    }
+    ~SocketSession() {
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+};
+
+class TestSocket {
+   public:
+    explicit TestSocket(aio::SocketHandle socket) : value(socket) {}
+    ~TestSocket() {
+#ifdef _WIN32
+        if (value != INVALID_SOCKET) ::closesocket(value);
+#else
+        if (value >= 0) ::close(value);
+#endif
+    }
+    TestSocket(const TestSocket&) = delete;
+    TestSocket& operator=(const TestSocket&) = delete;
+    aio::SocketHandle value;
+};
+
+}  // namespace
+
+TEST_CASE("socket wrappers accept, exchange bytes and translate errors") {
+    SocketSession session;
+    TestSocket listener(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
+    REQUIRE(listener.value != static_cast<aio::SocketHandle>(-1));
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    REQUIRE(::bind(listener.value, reinterpret_cast<sockaddr*>(&address),
+                   sizeof(address)) == 0);
+    REQUIRE(::listen(listener.value, 1) == 0);
+    aio::SocketLength size = sizeof(address);
+    REQUIRE(::getsockname(listener.value, reinterpret_cast<sockaddr*>(&address),
+                          &size) == 0);
+    TestSocket client(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
+    REQUIRE(client.value != static_cast<aio::SocketHandle>(-1));
+    REQUIRE(::connect(client.value, reinterpret_cast<sockaddr*>(&address),
+                      sizeof(address)) == 0);
+    const auto result = files::accept(listener.value, nullptr, nullptr);
+    REQUIRE(result >= 0);
+    TestSocket peer(static_cast<aio::SocketHandle>(result));
+    // Bound receive waits so a regression cannot hang the test process.
+#ifdef _WIN32
+    DWORD timeout = 5000;
+    REQUIRE(::setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO,
+                         reinterpret_cast<const char*>(&timeout),
+                         sizeof(timeout)) == 0);
+#else
+    timeval timeout{5, 0};
+    REQUIRE(::setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout)) == 0);
+#endif
+    REQUIRE(files::send(client.value, "hello", 5, 0) == 5);
+    char data[5]{};
+    REQUIRE(files::recv(peer.value, data, 5, MSG_WAITALL) == 5);
+    CHECK(std::string(data, 5) == "hello");
+#ifdef _WIN32
+    DWORD handle_flags = HANDLE_FLAG_INHERIT;
+    REQUIRE(GetHandleInformation(reinterpret_cast<HANDLE>(peer.value),
+                                 &handle_flags));
+    CHECK((handle_flags & HANDLE_FLAG_INHERIT) == 0);
+    u_long mode = 1;
+    REQUIRE(::ioctlsocket(peer.value, FIONBIO, &mode) == 0);
+    errno = 0;
+    CHECK(files::recv(peer.value, data, 1, 0) == -1);
+    CHECK(errno == EAGAIN);
+    errno = 0;
+    CHECK(files::send(INVALID_SOCKET, "x", 1, 0) == -1);
+    CHECK(errno == ENOTSOCK);
+    errno = 0;
+    CHECK(files::accept(INVALID_SOCKET, nullptr, nullptr) == -1);
+    CHECK(errno == ENOTSOCK);
+#endif
 }

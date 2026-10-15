@@ -2,11 +2,6 @@
 #include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/core/io/thread_pool_file_ops.h>
 #include <dftracer/utils/core/pipeline/executor.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
 #include <cerrno>
 
@@ -257,36 +252,37 @@ void ThreadPoolFileOps::execute_request(IoRequest* req) {
             result = platform_io::stat_fd(req->fd, req->stat_buf);
             break;
         case IoOp::ACCEPT:
-#ifdef __linux__
-            result = ::accept4(req->socket_fd, req->addr, req->addrlen,
-                               SOCK_NONBLOCK | SOCK_CLOEXEC);
+#ifdef _WIN32
+            // Plain thread-pool sockets remain blocking; there is no readiness
+            // poller.
+            result =
+                platform_io::accept(req->socket_fd, req->addr, req->addrlen);
 #else
-            result = ::accept(req->socket_fd, req->addr, req->addrlen);
-            if (result >= 0) {
-                int fd = static_cast<int>(result);
-                int fl = ::fcntl(fd, F_GETFL, 0);
-                ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-                ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-            }
+            result = platform_io::accept(req->socket_fd, req->addr,
+                                         req->addrlen, true);
 #endif
             break;
         case IoOp::RECV:
-            result = ::recv(req->socket_fd, req->buf, req->len, req->msg_flags);
+            result = platform_io::recv(req->socket_fd, req->buf, req->len,
+                                       req->msg_flags);
             break;
         case IoOp::SEND:
-            result = ::send(req->socket_fd, req->buf, req->len, req->msg_flags);
+            result = platform_io::send(req->socket_fd, req->buf, req->len,
+                                       req->msg_flags);
             break;
         case IoOp::READV:
-            result = ::readv(req->fd, req->iov, req->iovcnt);
+            result = platform_io::readv(req->fd, req->iov, req->iovcnt);
             break;
         case IoOp::WRITEV:
-            result = ::writev(req->fd, req->iov, req->iovcnt);
+            result = platform_io::writev(req->fd, req->iov, req->iovcnt);
             break;
         case IoOp::PREADV:
-            result = ::preadv(req->fd, req->iov, req->iovcnt, req->offset);
+            result = platform_io::preadv(req->fd, req->iov, req->iovcnt,
+                                         req->offset);
             break;
         case IoOp::PWRITEV:
-            result = ::pwritev(req->fd, req->iov, req->iovcnt, req->offset);
+            result = platform_io::pwritev(req->fd, req->iov, req->iovcnt,
+                                          req->offset);
             break;
         case IoOp::LSEEK:
             result = platform_io::seek(req->fd, req->offset, req->whence);

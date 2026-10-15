@@ -437,6 +437,9 @@ foreach(variant shared static)
     # symbol is already in libc (newer glibc) or libSystem (macOS).
     target_link_libraries(dftracer_utils_core_${variant}
                           PUBLIC ${CMAKE_DL_LIBS})
+    if(WIN32)
+      target_link_libraries(dftracer_utils_core_${variant} PUBLIC ws2_32)
+    endif()
 
     # Add stdfs if needed
     add_stdfs_if_needed(dftracer_utils_core_${variant})

@@ -1,8 +1,10 @@
+#include <dftracer/utils/core/io/io_sendfile.h>
 #include <dftracer/utils/core/io/platform_io.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cstring>
 #include <limits>
 
 #ifdef _WIN32
@@ -12,6 +14,7 @@
 #include <bit>
 #include <new>
 #include <string>
+#include <vector>
 #else
 #include <unistd.h>
 #endif
@@ -359,4 +362,342 @@ int stat_fd(int fd, FileStat* buf) noexcept {
 #endif
 }
 
+int iov_max_entries() noexcept {
+#ifdef _WIN32
+    return 1024;
+#else
+    static const int value = [] {
+        const long n = ::sysconf(_SC_IOV_MAX);
+        return n > 0 && n <= INT_MAX ? static_cast<int>(n) : 1024;
+    }();
+    return value;
+#endif
+}
+
+#ifdef _WIN32
+namespace {
+
+IoResult vector_io(int fd, const IoVec* iov, int count, FileOffset offset,
+                   bool positional, bool writing) noexcept {
+    if (count < 0 || count > iov_max_entries() || (positional && offset < 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (count > 0 && iov == nullptr) {
+        errno = EFAULT;
+        return -1;
+    }
+    std::size_t total = 0;
+    for (int i = 0; i < count; ++i) {
+        if (iov[i].iov_len >
+            static_cast<std::size_t>(std::numeric_limits<IoResult>::max()) -
+                total) {
+            errno = EINVAL;
+            return -1;
+        }
+        if (iov[i].iov_len > 0 && iov[i].iov_base == nullptr) {
+            errno = EFAULT;
+            return -1;
+        }
+        total += iov[i].iov_len;
+    }
+    // Gather/scatter around one I/O call so vectors do not independently move
+    // a shared descriptor or issue multiple writes to a pipe. A short result
+    // is valid; callers such as writev_all advance and retry the remaining
+    // data.
+    const auto size = std::min(total, static_cast<std::size_t>(INT_MAX));
+    try {
+        std::vector<char> buffer(size);
+        std::size_t copied = 0;
+        if (writing) {
+            for (int i = 0; i < count && copied < size; ++i) {
+                const auto n = std::min(iov[i].iov_len, size - copied);
+                if (n > 0)
+                    std::memcpy(buffer.data() + copied, iov[i].iov_base, n);
+                copied += n;
+            }
+        }
+        // Give the CRT a valid address even for an empty vector.
+        char empty = 0;
+        void* data = size > 0 ? buffer.data() : &empty;
+        IoResult result;
+        if (positional) {
+            result = positional_io(fd, data, size, offset, writing);
+        } else {
+            result = writing ? platform_io::write(fd, data, size)
+                             : platform_io::read(fd, data, size);
+        }
+        if (!writing && result > 0) {
+            copied = 0;
+            for (int i = 0;
+                 i < count && copied < static_cast<std::size_t>(result); ++i) {
+                const auto n = std::min(
+                    iov[i].iov_len, static_cast<std::size_t>(result) - copied);
+                if (n > 0)
+                    std::memcpy(iov[i].iov_base, buffer.data() + copied, n);
+                copied += n;
+            }
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        errno = ENOMEM;
+        return -1;
+    }
+}
+
+int socket_error(int error) noexcept {
+    switch (error) {
+        case WSAEINTR:
+            errno = EINTR;
+            break;
+        case WSAEBADF:
+            errno = EBADF;
+            break;
+        case WSAEACCES:
+            errno = EACCES;
+            break;
+        case WSAEFAULT:
+            errno = EFAULT;
+            break;
+        case WSAEINVAL:
+            errno = EINVAL;
+            break;
+        case WSAEMFILE:
+            errno = EMFILE;
+            break;
+        case WSAEWOULDBLOCK:
+            errno = EAGAIN;
+            break;
+        case WSAEINPROGRESS:
+            errno = EINPROGRESS;
+            break;
+        case WSAEALREADY:
+            errno = EALREADY;
+            break;
+        case WSAENOTSOCK:
+            errno = ENOTSOCK;
+            break;
+        case WSAEDESTADDRREQ:
+            errno = EDESTADDRREQ;
+            break;
+        case WSAEMSGSIZE:
+            errno = EMSGSIZE;
+            break;
+        case WSAEPROTOTYPE:
+            errno = EPROTOTYPE;
+            break;
+        case WSAENOPROTOOPT:
+            errno = ENOPROTOOPT;
+            break;
+        case WSAEPROTONOSUPPORT:
+            errno = EPROTONOSUPPORT;
+            break;
+        case WSAEOPNOTSUPP:
+            errno = EOPNOTSUPP;
+            break;
+        case WSAEAFNOSUPPORT:
+            errno = EAFNOSUPPORT;
+            break;
+        case WSAEADDRINUSE:
+            errno = EADDRINUSE;
+            break;
+        case WSAEADDRNOTAVAIL:
+            errno = EADDRNOTAVAIL;
+            break;
+        case WSAENETDOWN:
+            errno = ENETDOWN;
+            break;
+        case WSAENETUNREACH:
+            errno = ENETUNREACH;
+            break;
+        case WSAENETRESET:
+            errno = ENETRESET;
+            break;
+        case WSAECONNABORTED:
+            errno = ECONNABORTED;
+            break;
+        case WSAECONNRESET:
+            errno = ECONNRESET;
+            break;
+        case WSAENOBUFS:
+            errno = ENOBUFS;
+            break;
+        case WSAEISCONN:
+            errno = EISCONN;
+            break;
+        case WSAENOTCONN:
+            errno = ENOTCONN;
+            break;
+        case WSAESHUTDOWN:
+            errno = EPIPE;
+            break;
+        case WSAETIMEDOUT:
+            errno = ETIMEDOUT;
+            break;
+        case WSAECONNREFUSED:
+            errno = ECONNREFUSED;
+            break;
+        case WSAEHOSTUNREACH:
+            errno = EHOSTUNREACH;
+            break;
+        case WSANOTINITIALISED:
+            errno = ENETDOWN;
+            break;
+        default:
+            errno = EIO;
+            break;
+    }
+    return -1;
+}
+
+}  // namespace
+#endif
+
+IoResult readv(int fd, const IoVec* iov, int count) noexcept {
+#ifdef _WIN32
+    return vector_io(fd, iov, count, 0, false, false);
+#else
+    return ::readv(fd, iov, count);
+#endif
+}
+
+IoResult writev(int fd, const IoVec* iov, int count) noexcept {
+#ifdef _WIN32
+    return vector_io(fd, iov, count, 0, false, true);
+#else
+    return ::writev(fd, iov, count);
+#endif
+}
+
+IoResult preadv(int fd, const IoVec* iov, int count,
+                FileOffset offset) noexcept {
+#ifdef _WIN32
+    return vector_io(fd, iov, count, offset, true, false);
+#else
+    return ::preadv(fd, iov, count, offset);
+#endif
+}
+
+IoResult pwritev(int fd, const IoVec* iov, int count,
+                 FileOffset offset) noexcept {
+#ifdef _WIN32
+    return vector_io(fd, iov, count, offset, true, true);
+#else
+    return ::pwritev(fd, iov, count, offset);
+#endif
+}
+
+IoResult accept(SocketHandle socket, sockaddr* addr, SocketLength* addrlen,
+                bool nonblocking) noexcept {
+#ifdef __linux__
+    if (nonblocking)
+        return ::accept4(socket, addr, addrlen, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#endif
+    const auto accepted = ::accept(socket, addr, addrlen);
+#ifdef _WIN32
+    if (accepted == INVALID_SOCKET) return socket_error(WSAGetLastError());
+    // Match close-on-exec behavior without narrowing the SOCKET to a CRT fd.
+    if (!SetHandleInformation(reinterpret_cast<HANDLE>(accepted),
+                              HANDLE_FLAG_INHERIT, 0)) {
+        const auto error = GetLastError();
+        ::closesocket(accepted);
+        return win_error(error);
+    }
+    if (nonblocking) {
+        u_long mode = 1;
+        if (::ioctlsocket(accepted, FIONBIO, &mode) != 0) {
+            const auto error = WSAGetLastError();
+            ::closesocket(accepted);
+            return socket_error(error);
+        }
+    }
+#else
+    if (accepted < 0) return -1;
+    if (nonblocking) {
+        const int flags = ::fcntl(accepted, F_GETFL, 0);
+        if (flags < 0 || ::fcntl(accepted, F_SETFL, flags | O_NONBLOCK) < 0 ||
+            ::fcntl(accepted, F_SETFD, FD_CLOEXEC) < 0) {
+            const int error = errno;
+            ::close(accepted);
+            errno = error;
+            return -1;
+        }
+    }
+#endif
+    return static_cast<IoResult>(accepted);
+}
+
+IoResult recv(SocketHandle socket, void* buf, std::size_t len,
+              int flags) noexcept {
+#ifdef _WIN32
+    const int result = ::recv(
+        socket, static_cast<char*>(buf),
+        static_cast<int>(std::min(len, static_cast<std::size_t>(INT_MAX))),
+        flags);
+    return result == SOCKET_ERROR ? socket_error(WSAGetLastError()) : result;
+#else
+    return ::recv(socket, buf, len, flags);
+#endif
+}
+
+IoResult send(SocketHandle socket, const void* buf, std::size_t len,
+              int flags) noexcept {
+#ifdef _WIN32
+    const int result = ::send(
+        socket, static_cast<const char*>(buf),
+        static_cast<int>(std::min(len, static_cast<std::size_t>(INT_MAX))),
+        flags);
+    return result == SOCKET_ERROR ? socket_error(WSAGetLastError()) : result;
+#else
+    return ::send(socket, buf, len, flags);
+#endif
+}
+
 }  // namespace dftracer::utils::io::platform_io
+
+#ifdef _WIN32
+namespace dftracer::utils::io {
+
+IoResult platform_sendfile(int out_fd, int in_fd, FileOffset offset,
+                           std::size_t count) noexcept {
+    if (offset < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    // File descriptors (including CRT pipes) remain distinct from SOCKETs.
+    // Reading positionally leaves the input descriptor's position untouched.
+    char buffer[8192];
+    IoResult total = 0;
+    count = std::min(
+        count, static_cast<std::size_t>(std::numeric_limits<IoResult>::max()));
+    while (count > 0) {
+        const auto chunk = std::min(count, sizeof(buffer));
+        if (offset > std::numeric_limits<FileOffset>::max() -
+                         static_cast<FileOffset>(chunk)) {
+            errno = EOVERFLOW;
+            return total > 0 ? total : -1;
+        }
+        const auto n = platform_io::pread(in_fd, buffer, chunk, offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return total > 0 ? total : n;
+        IoResult written = 0;
+        while (written < n) {
+            const auto w =
+                platform_io::write(out_fd, buffer + written,
+                                   static_cast<std::size_t>(n - written));
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) {
+                if (w == 0) errno = EIO;
+                return total > 0 ? total : -1;
+            }
+            written += w;
+            total += w;
+        }
+        offset += n;
+        count -= static_cast<std::size_t>(n);
+    }
+    return total;
+}
+
+}  // namespace dftracer::utils::io
+#endif

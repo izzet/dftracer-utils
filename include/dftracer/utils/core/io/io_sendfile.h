@@ -1,8 +1,11 @@
 #ifndef DFTRACER_UTILS_CORE_IO_IO_SENDFILE_H
 #define DFTRACER_UTILS_CORE_IO_IO_SENDFILE_H
 
-#include <sys/types.h>
+#include <dftracer/utils/core/io/types.h>
+
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstddef>
@@ -20,8 +23,12 @@ namespace dftracer::utils::io {
 /// platform's native sendfile where available and a portable pread+write loop
 /// otherwise. Returns the number of bytes transferred, or a negative value on
 /// error (the caller maps a negative return to -errno).
-inline ssize_t platform_sendfile(int out_fd, int in_fd, off_t offset,
-                                 std::size_t count) {
+#ifdef _WIN32
+IoResult platform_sendfile(int out_fd, int in_fd, FileOffset offset,
+                           std::size_t count) noexcept;
+#else
+inline IoResult platform_sendfile(int out_fd, int in_fd, FileOffset offset,
+                                  std::size_t count) {
 #ifdef __linux__
     off_t off = offset;
     return ::sendfile(out_fd, in_fd, &off, count);
@@ -54,6 +61,7 @@ inline ssize_t platform_sendfile(int out_fd, int in_fd, off_t offset,
     return result;
 #endif
 }
+#endif
 
 }  // namespace dftracer::utils::io
 

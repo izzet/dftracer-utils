@@ -3,12 +3,6 @@
 #include <dftracer/utils/core/io/ops.h>
 #include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/core/pipeline/executor.h>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -17,24 +11,6 @@
 namespace dftracer::utils::io {
 
 namespace {
-
-// Max iovec entries writev(2) accepts. glibc only exposes IOV_MAX under XOPEN
-// feature macros and spells it UIO_MAXIOV; sysconf is the portable query.
-// io_uring's IORING_OP_WRITEV is bounded by the same limit.
-int iov_max_entries() noexcept {
-    static const int value = [] {
-        long n = ::sysconf(_SC_IOV_MAX);
-        if (n > 0) return static_cast<int>(n);
-#if defined(IOV_MAX)
-        return static_cast<int>(IOV_MAX);
-#elif defined(UIO_MAXIOV)
-        return static_cast<int>(UIO_MAXIOV);
-#else
-        return 1024;
-#endif
-    }();
-    return value;
-}
 
 // Every free op has the same shape: if the current executor has an I/O backend,
 // forward to its submit_* member (async); otherwise run the blocking syscall,
@@ -120,7 +96,7 @@ IoAwaitable accept(SocketHandle listen_fd, struct sockaddr* addr,
                    SocketLength* addrlen) noexcept {
     return io_dispatch<&IoBackend::submit_accept>(
         [](SocketHandle lf, struct sockaddr* a, SocketLength* al) {
-            return ::accept(lf, a, al);
+            return platform_io::accept(lf, a, al);
         },
         listen_fd, addr, addrlen);
 }
@@ -129,7 +105,7 @@ IoAwaitable recv(SocketHandle fd, void* buf, std::size_t len,
                  int flags) noexcept {
     return io_dispatch<&IoBackend::submit_recv>(
         [](SocketHandle f, void* b, std::size_t n, int fl) {
-            return ::recv(f, b, n, fl);
+            return platform_io::recv(f, b, n, fl);
         },
         fd, buf, len, flags);
 }
@@ -138,28 +114,32 @@ IoAwaitable send(SocketHandle fd, const void* buf, std::size_t len,
                  int flags) noexcept {
     return io_dispatch<&IoBackend::submit_send>(
         [](SocketHandle f, const void* b, std::size_t n, int fl) {
-            return ::send(f, b, n, fl);
+            return platform_io::send(f, b, n, fl);
         },
         fd, buf, len, flags);
 }
 
 IoAwaitable readv(int fd, const IoVec* iov, int iovcnt) noexcept {
     return io_dispatch<&IoBackend::submit_readv>(
-        [](int f, const IoVec* v, int c) { return ::readv(f, v, c); }, fd, iov,
-        iovcnt);
+        [](int f, const IoVec* v, int c) {
+            return platform_io::readv(f, v, c);
+        },
+        fd, iov, iovcnt);
 }
 
 IoAwaitable writev(int fd, const IoVec* iov, int iovcnt) noexcept {
     return io_dispatch<&IoBackend::submit_writev>(
-        [](int f, const IoVec* v, int c) { return ::writev(f, v, c); }, fd, iov,
-        iovcnt);
+        [](int f, const IoVec* v, int c) {
+            return platform_io::writev(f, v, c);
+        },
+        fd, iov, iovcnt);
 }
 
 coro::CoroTask<IoResult> writev_all(int fd, IoVec* iov, int iovcnt) {
     IoResult total = 0;
     int i = 0;
     while (i < iovcnt) {
-        int n = std::min(iovcnt - i, iov_max_entries());
+        int n = std::min(iovcnt - i, platform_io::iov_max_entries());
         IoResult rc = co_await io::writev(fd, iov + i, n);
         if (rc < 0) co_return rc;
         if (rc == 0) co_return -EIO;  // no progress; avoid spinning
@@ -184,7 +164,7 @@ IoAwaitable preadv(int fd, const IoVec* iov, int iovcnt,
                    FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_preadv>(
         [](int f, const IoVec* v, int c, FileOffset o) {
-            return ::preadv(f, v, c, o);
+            return platform_io::preadv(f, v, c, o);
         },
         fd, iov, iovcnt, offset);
 }
@@ -193,7 +173,7 @@ IoAwaitable pwritev(int fd, const IoVec* iov, int iovcnt,
                     FileOffset offset) noexcept {
     return io_dispatch<&IoBackend::submit_pwritev>(
         [](int f, const IoVec* v, int c, FileOffset o) {
-            return ::pwritev(f, v, c, o);
+            return platform_io::pwritev(f, v, c, o);
         },
         fd, iov, iovcnt, offset);
 }

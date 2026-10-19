@@ -571,7 +571,8 @@ set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/dataframe/kernels/sketch_keys.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/dataframe/kernels/stats_simd.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/dataframe/kernels/string_simd.cpp
-    PROPERTIES COMPILE_OPTIONS -Wno-missing-declarations)
+    PROPERTIES COMPILE_OPTIONS
+               "$<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-missing-declarations>")
 
 # The columnar engine (DFTRACER_UTILS_VEC_SOURCES) is built as part of the
 # single dftracer_utils_dataframe target below, not its own library.
@@ -661,7 +662,8 @@ set(DFTRACER_UTILS_DUQL_SOURCES
 # Highway per-target dispatch functions are referenced only within their TU.
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/dftracer/utils/duql/substr_simd.cpp
-    PROPERTIES COMPILE_OPTIONS -Wno-missing-declarations)
+    PROPERTIES COMPILE_OPTIONS
+               "$<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-missing-declarations>")
 
 create_library(
   NAME

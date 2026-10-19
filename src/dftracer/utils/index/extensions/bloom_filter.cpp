@@ -1,5 +1,6 @@
 #include <dftracer/utils/core/common/error.h>
 #include <dftracer/utils/core/common/hash/constants.h>
+#include <dftracer/utils/core/common/int128.h>
 #include <dftracer/utils/core/common/little_endian.h>
 #include <dftracer/utils/index/extensions/bloom_filter.h>
 
@@ -26,8 +27,8 @@ constexpr std::uint32_t SALT[BLOCK_WORDS] = {
 };
 
 inline std::size_t block_index(std::uint64_t h1, std::size_t num_blocks) {
-    return static_cast<std::size_t>(
-        (static_cast<__uint128_t>(h1) * num_blocks) >> 64);
+    return static_cast<std::size_t>((static_cast<uint128_t>(h1) * num_blocks) >>
+                                    64);
 }
 
 inline void compute_block_mask(std::uint64_t h2,

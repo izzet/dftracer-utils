@@ -1,4 +1,6 @@
 #include <dftracer/utils/core/common/base64.h>
+#include <dftracer/utils/core/common/checked_arithmetic.h>
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/hash/hash.h>
 #include <dftracer/utils/core/common/to_chars.h>
 #include <dftracer/utils/dataframe/agg/detail.h>
@@ -548,9 +550,11 @@ bool fast_open(AggState& st, const std::vector<PlainKey>& k,
 // this value and `sum` the field's sum word before it, or null when the
 // aggregates do not keep one (then a state whose moment words are all zero was
 // built from zeros, so it is centred on 0, as FieldStat centres it on sum / n).
-__attribute__((always_inline)) inline void light_moments(
-    std::uint64_t* mom, const std::uint64_t* sum, std::uint64_t n_prev,
-    FieldStatDomain domain, std::uint64_t bits) {
+DFTRACER_UTILS_FORCE_INLINE void light_moments(std::uint64_t* mom,
+                                               const std::uint64_t* sum,
+                                               std::uint64_t n_prev,
+                                               FieldStatDomain domain,
+                                               std::uint64_t bits) {
     double x;
     switch (domain) {
         case FieldStatDomain::F64:
@@ -602,9 +606,10 @@ __attribute__((always_inline)) inline void light_moments(
 // One cell into field `f` of a light group row (the presence word, then the
 // cells each field's `mask` names), in the cell's domain. Returns the wrap of
 // an integer sum (+1 up, -1 down, 0 none) for AggState::light_carry.
-__attribute__((always_inline)) inline int light_add(
-    std::uint64_t* row, std::uint32_t off, std::uint8_t mask, std::size_t f,
-    FieldStatDomain domain, std::uint64_t bits) {
+DFTRACER_UTILS_FORCE_INLINE int light_add(std::uint64_t* row, std::uint32_t off,
+                                          std::uint8_t mask, std::size_t f,
+                                          FieldStatDomain domain,
+                                          std::uint64_t bits) {
     constexpr std::uint8_t SUM = AggState::LIGHT_SUM;
     constexpr std::uint8_t MIN = AggState::LIGHT_MIN;
     constexpr std::uint8_t MAX = AggState::LIGHT_MAX;
@@ -652,7 +657,7 @@ __attribute__((always_inline)) inline int light_add(
                 const auto x = std::bit_cast<std::int64_t>(bits);
                 if (sum) {
                     std::int64_t s = 0;
-                    if (__builtin_add_overflow(
+                    if (::dftracer::utils::add_overflow(
                             std::bit_cast<std::int64_t>(*sum), x, &s))
                         [[unlikely]]
                         wrap = x < 0 ? -1 : 1;
@@ -663,7 +668,8 @@ __attribute__((always_inline)) inline int light_add(
                 break;
             }
             case FieldStatDomain::U64:
-                if (sum && __builtin_add_overflow(*sum, bits, sum)) [[unlikely]]
+                if (sum && ::dftracer::utils::add_overflow(*sum, bits, sum))
+                    [[unlikely]]
                     wrap = 1;
                 if (lo && bits < *lo) *lo = bits;
                 if (hi && bits > *hi) *hi = bits;
@@ -674,8 +680,9 @@ __attribute__((always_inline)) inline int light_add(
 }
 
 // Out of line so the per-row loops that call it stay small enough to inline.
-__attribute__((noinline, cold)) void add_carry(AggState& st, std::size_t slot,
-                                               int wrap) {
+DFTRACER_UTILS_NOINLINE DFTRACER_UTILS_COLD void add_carry(AggState& st,
+                                                           std::size_t slot,
+                                                           int wrap) {
     st.light_carry[slot] += wrap;
 }
 
@@ -935,12 +942,13 @@ bool accumulate_plain(AggState& st, const std::vector<const Series*>& keys,
                     groups[static_cast<std::size_t>(r + AHEAD)]);
                 if (nf > 0) {
                     if (st.light_on)
-                        __builtin_prefetch(
-                            st.light.data() + ga * st.light_stride, 1);
+                        DFTRACER_UTILS_PREFETCH(
+                            st.light.data() + ga * st.light_stride, 1, 3);
                     else
-                        __builtin_prefetch(st.fstats.data() + ga * nf, 1);
+                        DFTRACER_UTILS_PREFETCH(st.fstats.data() + ga * nf, 1,
+                                                3);
                 }
-                __builtin_prefetch(st.counts.data() + ga, 1);
+                DFTRACER_UTILS_PREFETCH(st.counts.data() + ga, 1, 3);
             }
             add_row.template operator()<Moments, Nulls>(
                 groups[static_cast<std::size_t>(r)], b0 + r);
@@ -1010,20 +1018,20 @@ bool accumulate_plain(AggState& st, const std::vector<const Series*>& keys,
             }
             const std::size_t mask = st.fast_slots.size() - 1;
             for (std::int64_t r = 0; r < std::min(m, AHEAD); ++r)
-                __builtin_prefetch(
+                DFTRACER_UTILS_PREFETCH(
                     st.fast_slots.data() +
                         (static_cast<std::size_t>(
                              hashes[static_cast<std::size_t>(r)]) &
                          mask),
-                    0);
+                    0, 3);
             for (std::int64_t r = 0; r < m; ++r) {
                 if (r + AHEAD < m)
-                    __builtin_prefetch(
+                    DFTRACER_UTILS_PREFETCH(
                         st.fast_slots.data() +
                             (static_cast<std::size_t>(
                                  hashes[static_cast<std::size_t>(r + AHEAD)]) &
                              mask),
-                        0);
+                        0, 3);
                 const std::uint64_t h = hashes[static_cast<std::size_t>(r)];
                 const std::uint64_t e =
                     st.fast_slots[static_cast<std::size_t>(h) & mask];
@@ -1033,15 +1041,17 @@ bool accumulate_plain(AggState& st, const std::vector<const Series*>& keys,
                     (e & FAST_TAG) == (h & FAST_TAG)) {
                     g = static_cast<std::int64_t>(e & ~FAST_TAG);
                     const auto gi = static_cast<std::size_t>(g);
-                    __builtin_prefetch(st.fast_words.data() + gi * W, 0);
+                    DFTRACER_UTILS_PREFETCH(st.fast_words.data() + gi * W, 0,
+                                            3);
                     if (nf > 0) {
                         if (st.light_on)
-                            __builtin_prefetch(
-                                st.light.data() + gi * st.light_stride, 1);
+                            DFTRACER_UTILS_PREFETCH(
+                                st.light.data() + gi * st.light_stride, 1, 3);
                         else
-                            __builtin_prefetch(st.fstats.data() + gi * nf, 1);
+                            DFTRACER_UTILS_PREFETCH(st.fstats.data() + gi * nf,
+                                                    1, 3);
                     }
-                    __builtin_prefetch(st.counts.data() + gi, 1);
+                    DFTRACER_UTILS_PREFETCH(st.counts.data() + gi, 1, 3);
                 }
                 cand[static_cast<std::size_t>(r)] = g;
             }

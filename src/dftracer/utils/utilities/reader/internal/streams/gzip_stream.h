@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_UTILITIES_READER_INTERNAL_STREAMS_GZIP_STREAM_H
 #define DFTRACER_UTILS_UTILITIES_READER_INTERNAL_STREAMS_GZIP_STREAM_H
 
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/index/gzip/checkpoint_indexer.h>
 #include <dftracer/utils/utilities/reader/error.h>
 #include <dftracer/utils/utilities/reader/internal/inflater.h>
@@ -79,7 +80,7 @@ class GzipStream : public StreamBase {
     coro::CoroTask<std::size_t> read_async(char *buffer,
                                            std::size_t buffer_size) override {
 #ifdef __GNUC__
-        __builtin_prefetch(buffer, 1, 3);
+        DFTRACER_UTILS_PREFETCH(buffer, 1, 3);
 #endif
 
         // Check if we have unconsumed data from previous read

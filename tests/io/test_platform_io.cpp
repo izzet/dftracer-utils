@@ -18,6 +18,12 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+
+// Requires the Win32 declarations provided by Winsock's Windows include.
 #include <io.h>
 #include <winioctl.h>
 #else
@@ -28,6 +34,10 @@
 namespace aio = dftracer::utils::io;
 namespace files = dftracer::utils::io::platform_io;
 namespace fs = std::filesystem;
+
+#ifdef _WIN32
+static_assert(std::is_same_v<aio::SocketHandle, SOCKET>);
+#endif
 
 namespace {
 
@@ -527,4 +537,34 @@ TEST_CASE("socket wrappers accept, exchange bytes and translate errors") {
     CHECK(files::accept(INVALID_SOCKET, nullptr, nullptr) == -1);
     CHECK(errno == ENOTSOCK);
 #endif
+}
+
+TEST_CASE(
+    "read-only file mappings outlive their descriptor and validate alignment") {
+    TemporaryDirectory dir;
+    const auto path = utf8_path(dir.path / "mapped.bin");
+    TestFd fd(files::open(path.c_str(), O_CREAT | O_RDWR, 0600));
+    REQUIRE(fd.value >= 0);
+    const auto granularity = files::mapping_granularity();
+    REQUIRE(granularity > 0);
+    REQUIRE(files::truncate(
+                fd.value, static_cast<aio::FileOffset>(granularity * 2)) == 0);
+    REQUIRE(files::pwrite(fd.value, "mapped", 6,
+                          static_cast<aio::FileOffset>(granularity)) == 6);
+    CHECK(files::map_readonly(fd.value, 1, 1) == nullptr);
+    CHECK(errno == EINVAL);
+    CHECK(files::map_readonly(fd.value, 0, 0) == nullptr);
+    CHECK(errno == EINVAL);
+    CHECK(files::map_readonly(-1, 0, granularity) == nullptr);
+    CHECK(errno == EBADF);
+    void* address = files::map_readonly(
+        fd.value, static_cast<aio::FileOffset>(granularity), granularity);
+    REQUIRE(address != nullptr);
+    const auto release = [granularity](void* p) {
+        files::unmap(p, granularity);
+    };
+    const std::unique_ptr<void, decltype(release)> mapped(address, release);
+    REQUIRE(files::close(fd.value) == 0);
+    fd.value = -1;
+    CHECK(std::string(static_cast<const char*>(address), 6) == "mapped");
 }

@@ -39,7 +39,9 @@ std::size_t columns_bytes(const std::vector<Series>& cols);
 std::size_t new_buffer_bytes(const std::vector<Series>& cols,
                              std::unordered_set<const void*>& seen);
 
-/// One collect's spill file. The file is unlinked as soon as it is created, so
+/// One collect's mapped spill storage (one file per region on Windows, where
+/// a file with live mappings cannot be resized). Files are unlinked or marked
+/// delete-on-close as soon as they are created, so
 /// nothing stays in the spill directory; the open descriptor and the mappings
 /// keep its data. Each spilled part is a page-aligned region mapped read-only.
 class PartFile {

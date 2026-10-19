@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/common/bits.h>
 #include <dftracer/utils/dataframe/abi.h>
 #include <dftracer/utils/dataframe/batch_ops.h>
 #include <dftracer/utils/dataframe/internal/column_data.h>
@@ -139,7 +140,7 @@ std::shared_ptr<Buffer> mask_to_indices(const std::uint8_t* bits,
         for (std::int64_t w = b; w < e; ++w) {
             std::uint64_t x;
             std::memcpy(&x, bits + w * 8, sizeof(x));
-            c += __builtin_popcountll(x);
+            c += ::dftracer::utils::bits::popcount_u64(x);
         }
         counts[static_cast<std::size_t>(b / GRAIN) + 1] = c;
     });
@@ -160,7 +161,8 @@ std::shared_ptr<Buffer> mask_to_indices(const std::uint8_t* bits,
             std::memcpy(&x, bits + w * 8, sizeof(x));
             while (x != 0) {
                 sel[static_cast<std::size_t>(k++)] =
-                    w * 64 + static_cast<unsigned>(__builtin_ctzll(x));
+                    w * 64 +
+                    static_cast<unsigned>(::dftracer::utils::bits::ctz_u64(x));
                 x &= x - 1;
             }
         }

@@ -10,6 +10,7 @@
 // no allocation per row. A null is not fed to a running step (the running
 // functions skip nulls); the caller decides what a null row outputs.
 
+#include <dftracer/utils/core/common/checked_arithmetic.h>
 #include <dftracer/utils/core/common/int128.h>
 #include <dftracer/utils/dataframe/kernels/order.h>
 
@@ -49,14 +50,14 @@ inline std::uint64_t to_uint64(Wide v, const char* func) {
 struct SumI64 {
     std::int64_t acc = 0;
     void add(std::int64_t v) {
-        if (__builtin_add_overflow(acc, v, &acc))
+        if (::dftracer::utils::add_overflow(acc, v, &acc))
             overflow("RUNNING_SUM", "int64");
     }
 };
 struct SumU64 {
     std::uint64_t acc = 0;
     void add(std::uint64_t v) {
-        if (__builtin_add_overflow(acc, v, &acc))
+        if (::dftracer::utils::add_overflow(acc, v, &acc))
             overflow("RUNNING_SUM", "uint64");
     }
 };

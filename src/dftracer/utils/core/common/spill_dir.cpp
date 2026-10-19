@@ -9,6 +9,13 @@
 #include <dftracer/utils/core/env.h>
 #ifdef _WIN32
 #include <dftracer/utils/core/io/platform_io.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #else
 #include <signal.h>
 #include <unistd.h>

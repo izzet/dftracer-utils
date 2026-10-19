@@ -1,4 +1,5 @@
 #include <ankerl/unordered_dense.h>
+#include <dftracer/utils/core/common/checked_arithmetic.h>
 #include <dftracer/utils/dataframe/types.h>
 #include <dftracer/utils/duql/overlap.h>
 #include <dftracer/utils/duql/vectorize.h>
@@ -92,7 +93,7 @@ T add_saturating(T a, T b) {
         return a + b;
     } else {
         T r;
-        if (!__builtin_add_overflow(a, b, &r)) return r;
+        if (!::dftracer::utils::add_overflow(a, b, &r)) return r;
         return b > 0 ? std::numeric_limits<T>::max()
                      : std::numeric_limits<T>::lowest();
     }

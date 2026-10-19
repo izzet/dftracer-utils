@@ -8,14 +8,22 @@
 #include <limits>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <io.h>
 #include <stdlib.h>
+#include <winsock2.h>
 
 #include <bit>
 #include <new>
 #include <string>
 #include <vector>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -371,6 +379,58 @@ int iov_max_entries() noexcept {
         return n > 0 && n <= INT_MAX ? static_cast<int>(n) : 1024;
     }();
     return value;
+#endif
+}
+
+std::size_t mapping_granularity() noexcept {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwAllocationGranularity;
+#else
+    const long page = ::sysconf(_SC_PAGESIZE);
+    return page > 0 ? static_cast<std::size_t>(page) : 4096;
+#endif
+}
+
+void* map_readonly(int fd, FileOffset offset, std::size_t length) noexcept {
+    if (offset < 0 || length == 0 ||
+        static_cast<std::uint64_t>(offset) % mapping_granularity() != 0) {
+        errno = EINVAL;
+        return nullptr;
+    }
+#ifdef _WIN32
+    InvalidParameterScope parameters;
+    const auto raw = _get_osfhandle(fd);
+    if (raw == -1 || raw == -2) {
+        errno = EBADF;
+        return nullptr;
+    }
+    ScopedHandle mapping(CreateFileMappingW(
+        reinterpret_cast<HANDLE>(raw), nullptr, PAGE_READONLY, 0, 0, nullptr));
+    if (mapping.get() == nullptr) {
+        win_error(GetLastError());
+        return nullptr;
+    }
+    void* address = MapViewOfFile(
+        mapping.get(), FILE_MAP_READ,
+        static_cast<DWORD>(static_cast<std::uint64_t>(offset) >> 32),
+        static_cast<DWORD>(offset), length);
+    if (!address) win_error(GetLastError());
+    // The view keeps the section alive after its mapping handle is closed.
+    return address;
+#else
+    void* address = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, fd, offset);
+    return address == MAP_FAILED ? nullptr : address;
+#endif
+}
+
+int unmap(void* address, std::size_t length) noexcept {
+#ifdef _WIN32
+    (void)length;
+    return UnmapViewOfFile(address) ? 0 : win_error(GetLastError());
+#else
+    return ::munmap(address, length);
 #endif
 }
 

@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_DATAFRAME_INTERNAL_TEMPORAL_ARITH_H
 #define DFTRACER_UTILS_DATAFRAME_INTERNAL_TEMPORAL_ARITH_H
 
+#include <dftracer/utils/core/common/checked_arithmetic.h>
 #include <dftracer/utils/dataframe/types.h>
 
 #include <cstdint>
@@ -120,7 +121,8 @@ inline std::optional<std::vector<std::int64_t>> rescale_ticks_up(
     std::vector<std::int64_t> out(n);
     for (std::size_t i = 0; i < n; ++i) {
         std::int64_t r;
-        if (__builtin_mul_overflow(p[i], ratio, &r)) return std::nullopt;
+        if (::dftracer::utils::mul_overflow(p[i], ratio, &r))
+            return std::nullopt;
         out[i] = r;
     }
     return out;

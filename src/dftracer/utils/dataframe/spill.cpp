@@ -8,13 +8,12 @@
 #include <dftracer/utils/core/common/spill_dir.h>
 #include <dftracer/utils/core/common/str_format.h>
 #include <dftracer/utils/core/env.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/dataframe/abi.h>
 #include <dftracer/utils/dataframe/internal/column_data.h>
 #include <dftracer/utils/dataframe/internal/spill.h>
 #include <dftracer/utils/dataframe/types.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #ifdef DFTRACER_UTILS_ENABLE_ZSTD
 #include <zstd.h>
 #endif
@@ -553,9 +552,7 @@ std::vector<Series> PartFile::append(const std::vector<Series>& cols) {
         place(cp.data, dftu_series_data(s.handle()), nbytes);
     }
 
-    const long page_size = ::sysconf(_SC_PAGESIZE);
-    const std::size_t page =
-        page_size > 0 ? static_cast<std::size_t>(page_size) : 4096;
+    const std::size_t page = io::platform_io::mapping_granularity();
     const std::size_t region_bytes = bits::align_up(at, page);
     std::vector<Series> out;
     out.reserve(cols.size());
@@ -563,26 +560,38 @@ std::vector<Series> PartFile::append(const std::vector<Series>& cols) {
         for (const Series& c : cols) out.push_back(c.share());
         return out;
     }
+    if (!file_) file_ = unwrap(SpillFile::create());
     const std::uint64_t base = file_->reserve(region_bytes, page);
     for (const ColumnPlan& cp : plans)
         for (const Piece* p : {&cp.validity, &cp.offsets, &cp.data})
             if (p->bytes != 0)
                 unwrap(file_->write_at(base + p->at, p->src, p->bytes));
     // The last bytes may be padding: extend so the mapped pages exist.
-    if (::ftruncate(file_->fd(), static_cast<off_t>(base + region_bytes)) != 0)
+    if (io::platform_io::truncate(
+            file_->fd(), static_cast<io::FileOffset>(base + region_bytes)) != 0)
         throw std::runtime_error("spill: cannot extend the spill file (" +
                                  std::string(std::strerror(errno)) + "); set " +
                                  constants::SPILL_DIR_ENV +
                                  " to a directory with free space");
-    void* map = ::mmap(nullptr, region_bytes, PROT_READ, MAP_SHARED,
-                       file_->fd(), static_cast<off_t>(base));
-    if (map == MAP_FAILED)
+    void* map = io::platform_io::map_readonly(
+        file_->fd(), static_cast<io::FileOffset>(base), region_bytes);
+    if (map == nullptr)
         throw std::runtime_error("spill: cannot map the spill file (" +
                                  std::string(std::strerror(errno)) + "); set " +
                                  constants::SPILL_DIR_ENV +
                                  " to a usable directory");
-    const std::shared_ptr<void> region(
-        map, [region_bytes](void* m) { ::munmap(m, region_bytes); });
+#ifdef _WIN32
+    // Windows cannot resize a file while any view of it is mapped. Seal one
+    // backing file per region; keep it until the last column view is unmapped.
+    const std::shared_ptr<SpillFile> owner(std::move(file_));
+    const std::shared_ptr<void> region(map, [region_bytes, owner](void* m) {
+        io::platform_io::unmap(m, region_bytes);
+    });
+#else
+    const std::shared_ptr<void> region(map, [region_bytes](void* m) {
+        io::platform_io::unmap(m, region_bytes);
+    });
+#endif
     const auto window = [&](const Piece& p) -> std::shared_ptr<Buffer> {
         if (p.bytes == 0) return Buffer::allocate(0);
         return Buffer::wrap(static_cast<std::uint8_t*>(map) + p.at, p.bytes,

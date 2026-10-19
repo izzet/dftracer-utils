@@ -1,4 +1,6 @@
 // clang-format off
+#include <dftracer/utils/core/common/bits.h>
+#include <dftracer/utils/core/common/checked_arithmetic.h>
 #include <dftracer/utils/core/common/int128.h>
 #include <dftracer/utils/python/series_detail.h>  // Python.h first
 #include <datetime.h>
@@ -84,9 +86,11 @@ std::int64_t floor_mod(std::int64_t a, std::int64_t b) {
 bool to_micros(std::int64_t v, dataframe::TimeUnit unit, std::int64_t& out) {
     switch (unit) {
         case dataframe::TimeUnit::Second:
-            return !__builtin_mul_overflow(v, std::int64_t{1'000'000}, &out);
+            return !::dftracer::utils::mul_overflow(v, std::int64_t{1'000'000},
+                                                    &out);
         case dataframe::TimeUnit::Milli:
-            return !__builtin_mul_overflow(v, std::int64_t{1'000}, &out);
+            return !::dftracer::utils::mul_overflow(v, std::int64_t{1'000},
+                                                    &out);
         case dataframe::TimeUnit::Micro:
             out = v;
             return true;
@@ -662,7 +666,7 @@ void for_each_null(const std::uint8_t* valid, std::int64_t n, Fn set) {
     for (std::int64_t k = 0; k < bytes; ++k) {
         auto m = static_cast<unsigned>(~valid[k] & 0xFFU);
         while (m) {
-            const std::int64_t i = 8 * k + __builtin_ctz(m);
+            const std::int64_t i = 8 * k + ::dftracer::utils::bits::ctz_u64(m);
             if (i < n) set(i);
             m &= m - 1;
         }

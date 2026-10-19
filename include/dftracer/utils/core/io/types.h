@@ -5,14 +5,10 @@
 #include <cstdint>
 
 #ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 #include <sys/stat.h>
-#include <winsock2.h>
+// Do not expose Windows SDK macros (IN, ERROR, etc.) through public I/O
+// headers. SOCKET is UINT_PTR; native declarations stay in platform sources.
+struct sockaddr;
 #else
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -27,7 +23,7 @@ using IoResult = std::intptr_t;
 using FileOffset = std::int64_t;
 using FileMode = int;
 using FileStat = struct ::_stat64;
-using SocketHandle = SOCKET;
+using SocketHandle = std::uintptr_t;
 using SocketLength = int;
 
 struct IoVec {

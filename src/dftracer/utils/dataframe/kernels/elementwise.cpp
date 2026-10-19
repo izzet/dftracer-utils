@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/common/bits.h>
 #include <dftracer/utils/dataframe/abi.h>
 #include <dftracer/utils/dataframe/internal/column_data.h>
 #include <dftracer/utils/dataframe/internal/numeric_dispatch.h>
@@ -716,7 +717,8 @@ void attach_bitmap(dftu_series* out, std::shared_ptr<Buffer> vbuf) {
     std::int64_t valid = 0;
     const std::uint8_t* b = vbuf->data();
     const std::size_t nbytes = static_cast<std::size_t>((out->length + 7) / 8);
-    for (std::size_t i = 0; i < nbytes; ++i) valid += __builtin_popcount(b[i]);
+    for (std::size_t i = 0; i < nbytes; ++i)
+        valid += ::dftracer::utils::bits::popcount_u64(b[i]);
     out->validity = std::move(vbuf);
     out->null_count = out->length - valid;
 }

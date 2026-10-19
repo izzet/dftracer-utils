@@ -8,6 +8,7 @@
  * friends to these.
  */
 
+#include <math.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -18,40 +19,100 @@ extern "C" {
 
 /** Count leading zero bits of @p x; 64 when @p x is 0. */
 static inline int dftu_clz_u64(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
     return x == 0 ? 64 : __builtin_clzll(x);
+#else
+    int n = 0;
+    if (x == 0) return 64;
+    if ((x >> 32) == 0) {
+        n += 32;
+        x <<= 32;
+    }
+    if ((x >> 48) == 0) {
+        n += 16;
+        x <<= 16;
+    }
+    if ((x >> 56) == 0) {
+        n += 8;
+        x <<= 8;
+    }
+    if ((x >> 60) == 0) {
+        n += 4;
+        x <<= 4;
+    }
+    if ((x >> 62) == 0) {
+        n += 2;
+        x <<= 2;
+    }
+    return n + ((x >> 63) == 0);
+#endif
 }
 
 /** Count trailing zero bits of @p x; 64 when @p x is 0. */
 static inline int dftu_ctz_u64(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
     return x == 0 ? 64 : __builtin_ctzll(x);
+#else
+    int n = 0;
+    if (x == 0) return 64;
+    if ((x & UINT64_C(0xffffffff)) == 0) {
+        n += 32;
+        x >>= 32;
+    }
+    if ((x & UINT64_C(0xffff)) == 0) {
+        n += 16;
+        x >>= 16;
+    }
+    if ((x & UINT64_C(0xff)) == 0) {
+        n += 8;
+        x >>= 8;
+    }
+    if ((x & UINT64_C(0xf)) == 0) {
+        n += 4;
+        x >>= 4;
+    }
+    if ((x & UINT64_C(0x3)) == 0) {
+        n += 2;
+        x >>= 2;
+    }
+    return n + ((x & 1) == 0);
+#endif
 }
 
 /** Number of set bits in @p x. */
 static inline int dftu_popcount_u64(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
     return __builtin_popcountll(x);
+#else
+    x -= (x >> 1) & UINT64_C(0x5555555555555555);
+    x = (x & UINT64_C(0x3333333333333333)) +
+        ((x >> 2) & UINT64_C(0x3333333333333333));
+    x = (x + (x >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+    return (int)((x * UINT64_C(0x0101010101010101)) >> 56);
+#endif
 }
 
 /** Floor of log2(@p x): index of the highest set bit; 0 when @p x is 0. */
 static inline int dftu_ilog2_u64(uint64_t x) {
-    return x == 0 ? 0 : 63 - __builtin_clzll(x);
+    return x == 0 ? 0 : 63 - dftu_clz_u64(x);
 }
 
 /** Number of bits needed to represent @p x (``ilog2 + 1``); 0 when @p x is 0.
  */
 static inline int dftu_bit_width_u64(uint64_t x) {
-    return x == 0 ? 0 : 64 - __builtin_clzll(x);
+    return x == 0 ? 0 : 64 - dftu_clz_u64(x);
 }
 
 /** Smallest power of two >= @p x (1 when @p x is 0). Saturates to 0 above
  * 2^63. */
 static inline uint64_t dftu_ceil_pow2_u64(uint64_t x) {
     if (x <= 1) return 1;
-    return (uint64_t)2 << (63 - __builtin_clzll(x - 1));
+    return (uint64_t)2 << (63 - dftu_clz_u64(x - 1));
 }
 
 /** Largest power of two <= @p x; 0 when @p x is 0. */
 static inline uint64_t dftu_floor_pow2_u64(uint64_t x) {
-    return x == 0 ? 0 : (uint64_t)1 << (63 - __builtin_clzll(x));
+    return x == 0 ? 0 : (uint64_t)1 << (63 - dftu_clz_u64(x));
 }
 
 /** Rotate @p x left by @p r bits (@p r taken mod 64). */
@@ -108,7 +169,7 @@ static inline uint64_t dftu_align_down_u64(uint64_t x, uint64_t a) {
 /** Integer square root: the largest @c r with ``r*r <= x``. */
 static inline uint64_t dftu_isqrt_u64(uint64_t x) {
     if (x == 0) return 0;
-    uint64_t r = (uint64_t)__builtin_sqrt((double)x);
+    uint64_t r = (uint64_t)sqrt((double)x);
     while (r > 0 && r > x / r) --r;     /* correct any float rounding up */
     while ((r + 1) <= x / (r + 1)) ++r; /* and up */
     return r;
@@ -128,9 +189,17 @@ static inline uint64_t dftu_gcd_u64(uint64_t a, uint64_t b) {
 
 /** High 64 bits of the 128-bit product @p a * @p b. */
 static inline uint64_t dftu_mul_hi_u64(uint64_t a, uint64_t b) {
+#if defined(__SIZEOF_INT128__)
     return (uint64_t)((__extension__((unsigned __int128)a *
                                      (unsigned __int128)b)) >>
                       64);
+#else
+    const uint64_t mask = UINT64_C(0xffffffff);
+    const uint64_t low = (a & mask) * (b & mask);
+    const uint64_t middle = (a >> 32) * (b & mask) + (low >> 32);
+    const uint64_t carry = (a & mask) * (b >> 32) + (middle & mask);
+    return (a >> 32) * (b >> 32) + (middle >> 32) + (carry >> 32);
+#endif
 }
 
 /** SplitMix64 finalizer: a fast, well-avalanched hash of @p x.
@@ -164,24 +233,24 @@ static inline double dftu_clamp_f64(double x, double lo, double hi) {
     return x < lo ? lo : (x > hi ? hi : x);
 }
 
-static inline double dftu_sqrt_f64(double x) { return __builtin_sqrt(x); }
-static inline double dftu_log2_f64(double x) { return __builtin_log2(x); }
-static inline double dftu_log_f64(double x) { return __builtin_log(x); }
-static inline double dftu_exp_f64(double x) { return __builtin_exp(x); }
+static inline double dftu_sqrt_f64(double x) { return sqrt(x); }
+static inline double dftu_log2_f64(double x) { return log2(x); }
+static inline double dftu_log_f64(double x) { return log(x); }
+static inline double dftu_exp_f64(double x) { return exp(x); }
 
 /** Fused multiply-add ``a*b + c`` with a single rounding. */
 static inline double dftu_fma_f64(double a, double b, double c) {
-    return __builtin_fma(a, b, c);
+    return fma(a, b, c);
 }
 
 /** Linear interpolation from @p a to @p b by @p t (unclamped). */
 static inline double dftu_lerp_f64(double a, double b, double t) {
-    return __builtin_fma(t, b - a, a);
+    return fma(t, b - a, a);
 }
 
 /** Magnitude of @p x with the sign of @p y. */
 static inline double dftu_copysign_f64(double x, double y) {
-    return __builtin_copysign(x, y);
+    return copysign(x, y);
 }
 
 #ifdef __cplusplus

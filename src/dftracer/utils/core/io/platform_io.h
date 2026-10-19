@@ -25,6 +25,12 @@ int truncate(int fd, FileOffset length) noexcept;
 FileOffset seek(int fd, FileOffset offset, int whence) noexcept;
 int stat_fd(int fd, FileStat* buf) noexcept;
 
+// Map an aligned range read-only. Failure returns nullptr and sets errno.
+// Windows requires allocation-granularity offsets, which can exceed page size.
+std::size_t mapping_granularity() noexcept;
+void* map_readonly(int fd, FileOffset offset, std::size_t length) noexcept;
+int unmap(void* address, std::size_t length) noexcept;
+
 int iov_max_entries() noexcept;
 IoResult readv(int fd, const IoVec* iov, int count) noexcept;
 IoResult writev(int fd, const IoVec* iov, int count) noexcept;

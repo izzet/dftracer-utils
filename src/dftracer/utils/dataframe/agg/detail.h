@@ -2,6 +2,7 @@
 #define DFTRACER_UTILS_DATAFRAME_AGG_DETAIL_H
 
 #include <ankerl/unordered_dense.h>
+#include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/hash/hash_combine.h>
 #include <dftracer/utils/dataframe/agg.h>
 #include <dftracer/utils/dataframe/field_stat.h>
@@ -82,7 +83,7 @@ struct AggPages {
         stride = s;
         per_page = PAGE_WORDS / s;
     }
-    __attribute__((noinline)) void grow() {
+    DFTRACER_UTILS_NOINLINE void grow() {
         pages.emplace_back(new std::uint64_t[PAGE_WORDS]);
         cursor = pages.back().get();
         left = per_page;

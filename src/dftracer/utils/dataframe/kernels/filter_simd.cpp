@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/common/bits.h>
 #include <dftracer/utils/dataframe/internal/column_data.h>
 #include <dftracer/utils/dataframe/internal/filter_simd.h>
 #include <dftracer/utils/dataframe/internal/scalar.h>
@@ -32,7 +33,8 @@ std::int64_t compact_gt_lanes(const T* p, std::int64_t n, T thr,
         std::uint64_t bits = 0;
         hn::StoreMaskBits(d, m, reinterpret_cast<std::uint8_t*>(&bits));
         while (bits != 0) {
-            unsigned b = static_cast<unsigned>(__builtin_ctzll(bits));
+            unsigned b =
+                static_cast<unsigned>(::dftracer::utils::bits::ctz_u64(bits));
             out[count++] = static_cast<std::int64_t>(i + b);
             bits &= bits - 1;
         }

@@ -1,3 +1,4 @@
+#include <dftracer/utils/core/common/checked_arithmetic.h>
 #include <dftracer/utils/core/common/hash/fnv1a.h>
 #include <dftracer/utils/core/common/hash/hex64.h>
 #include <dftracer/utils/dataframe/abi.h>
@@ -1046,7 +1047,7 @@ dftu_series* build_flat_string(std::int64_t n, IsNull is_null, LenFn len_of,
     for (std::int64_t i = 0; i < n; ++i) {
         if (!is_null(i)) {
             const std::int64_t l = len_of(i);
-            if (l < 0 || __builtin_add_overflow(total, l, &total) ||
+            if (l < 0 || ::dftracer::utils::add_overflow(total, l, &total) ||
                 total > std::numeric_limits<std::int32_t>::max())
                 return nullptr;
         }
@@ -1384,7 +1385,7 @@ dftu_series* repeat_impl(const dftu_series* v, std::int64_t n) {
         v,
         [n](const auto& f, std::int64_t i) {
             std::int64_t total;
-            if (__builtin_mul_overflow(f.len(i), n, &total))
+            if (::dftracer::utils::mul_overflow(f.len(i), n, &total))
                 return std::numeric_limits<std::int64_t>::max();
             return total;
         },

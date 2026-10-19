@@ -16,12 +16,20 @@ namespace detail {
 
 struct TreiberBase {
     static void store_next(void* block, void* next) noexcept {
+#ifdef _MSC_VER
         std::atomic_ref<void*>(*static_cast<void**>(block))
             .store(next, std::memory_order_release);
+#else
+        __atomic_store_n(static_cast<void**>(block), next, __ATOMIC_RELEASE);
+#endif
     }
     static void* load_next(void* block) noexcept {
+#ifdef _MSC_VER
         return std::atomic_ref<void*>(*static_cast<void**>(block))
             .load(std::memory_order_acquire);
+#else
+        return __atomic_load_n(static_cast<void**>(block), __ATOMIC_ACQUIRE);
+#endif
     }
 };
 

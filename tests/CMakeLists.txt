@@ -83,6 +83,7 @@ add_test(NAME agg_families
 # +++++++++++++++++++++++++++++++++++++++++
 
 set(TEST_CPP_SOURCES
+    core/test_checked_arithmetic.cpp
     core/test_int128.cpp
     core/test_platform_runtime.cpp
     # Core tests

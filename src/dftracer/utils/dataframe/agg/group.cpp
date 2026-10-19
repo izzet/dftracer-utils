@@ -452,11 +452,16 @@ std::optional<DataFrame> finalize_in_place(
                 if ((pv[g >> 3] >> (g & 7)) & 1) continue;
                 const auto r = static_cast<std::uint64_t>(
                     rank[static_cast<std::size_t>(at + g)]);
-                // The builtin, not std::atomic_ref: Apple's libc++ of the
-                // wheel toolchain does not have it.
+                // Apple's wheel toolchain does not have std::atomic_ref.
+#ifdef _MSC_VER
+                std::atomic_ref<std::uint64_t>(bits[r >> 6])
+                    .fetch_and(~(std::uint64_t{1} << (r & 63)),
+                               std::memory_order_relaxed);
+#else
                 __atomic_fetch_and(&bits[r >> 6],
                                    ~(std::uint64_t{1} << (r & 63)),
                                    __ATOMIC_RELAXED);
+#endif
                 ++nulls;
             }
             nulls_of[c].fetch_add(nulls, std::memory_order_relaxed);

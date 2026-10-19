@@ -26,6 +26,37 @@ std::optional<Morsel> run(
 }  // namespace
 
 TEST_SUITE("spill") {
+    TEST_CASE(
+        "mapped parts remain readable after later appends and store "
+        "destruction") {
+        std::vector<Series> first;
+        std::vector<Series> last;
+        {
+            spill::PartFile store;
+            for (std::int64_t part = 0; part < 4; ++part) {
+                std::vector<std::int64_t> numbers(10000, part + 11);
+                std::vector<std::string> words(10000,
+                                               "part_" + std::to_string(part));
+                std::vector<Series> columns;
+                columns.push_back(Series::flat_i64(
+                    numbers.data(), static_cast<std::int64_t>(numbers.size())));
+                columns.push_back(Series::strings(words));
+                auto mapped = store.append(columns);
+                if (part == 0)
+                    first = std::move(mapped);
+                else
+                    last = std::move(mapped);
+                REQUIRE(first.size() == 2);
+                CHECK(first[0].data<std::int64_t>()[9999] == 11);
+                CHECK(first[1].string_at(9999) == "part_0");
+            }
+        }
+        CHECK(first[0].data<std::int64_t>()[0] == 11);
+        CHECK(first[1].string_at(0) == "part_0");
+        CHECK(last[0].data<std::int64_t>()[9999] == 14);
+        CHECK(last[1].string_at(9999) == "part_3");
+    }
+
     TEST_CASE("round-trip mixed-type morsels through a run file") {
         std::vector<std::int64_t> a{1, 2, 3, 4};
         std::uint8_t bm = 0b1011;  // row 2 null
@@ -69,9 +100,19 @@ TEST_SUITE("spill") {
     TEST_CASE("compressed morsels read back exactly and take less room") {
         struct Env {
             explicit Env(const char* v) {
+#ifdef _WIN32
+                ::_putenv_s("DFTRACER_UTILS_SPILL_COMPRESS", v);
+#else
                 ::setenv("DFTRACER_UTILS_SPILL_COMPRESS", v, 1);
+#endif
             }
-            ~Env() { ::unsetenv("DFTRACER_UTILS_SPILL_COMPRESS"); }
+            ~Env() {
+#ifdef _WIN32
+                ::_putenv_s("DFTRACER_UTILS_SPILL_COMPRESS", "");
+#else
+                ::unsetenv("DFTRACER_UTILS_SPILL_COMPRESS");
+#endif
+            }
         };
         constexpr std::int64_t N = 20000;
         std::vector<std::int64_t> a(N);

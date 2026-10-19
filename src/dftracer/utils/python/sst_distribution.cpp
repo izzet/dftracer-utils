@@ -1,4 +1,6 @@
 #include <dftracer/utils/core/common/constants.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/runtime.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
 #include <dftracer/utils/index/build/batch_builder.h>
@@ -23,7 +25,6 @@
 #include <dftracer/utils/utilities/filesystem/pattern_directory_scanner_utility.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -704,14 +705,15 @@ namespace {
 dftracer::utils::coro::CoroTask<void> scan_one_gzip_file(
     std::string path, std::vector<GzipMember> *out) {
     out->clear();
-    int fd = ::open(path.c_str(), O_RDONLY);
+    int fd = ::dftracer::utils::io::platform_io::open(path.c_str(), O_RDONLY);
     if (fd < 0) co_return;
-    struct stat st;
-    if (::fstat(fd, &st) == 0 && st.st_size >= 18) {
+    ::dftracer::utils::io::FileStat st;
+    if (::dftracer::utils::io::platform_io::stat_fd(fd, &st) == 0 &&
+        st.st_size >= 18) {
         co_await enumerate_gzip_member_candidates(
             fd, static_cast<std::uint64_t>(st.st_size), *out);
     }
-    ::close(fd);
+    ::dftracer::utils::io::platform_io::close(fd);
 }
 
 }  // namespace

@@ -5,6 +5,7 @@
 #include <dftracer/utils/core/common/exception_helpers.h>
 #include <dftracer/utils/core/coro/async_generator.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/compress/libdeflate_gzip.h>
 
 #include <algorithm>
@@ -51,8 +52,8 @@ inline coro::AsyncGenerator<std::string_view> decode_gzip_members(
         unsigned char trailer[4];
         if (co_await dftracer::utils::io::pread(
                 fd, trailer, sizeof trailer,
-                static_cast<off_t>(file_size - sizeof trailer)) ==
-            static_cast<ssize_t>(sizeof trailer)) {
+                static_cast<io::FileOffset>(file_size - sizeof trailer)) ==
+            static_cast<io::IoResult>(sizeof trailer)) {
             const std::size_t isize =
                 static_cast<std::size_t>(trailer[0]) |
                 static_cast<std::size_t>(trailer[1]) << 8 |
@@ -139,8 +140,9 @@ inline coro::AsyncGenerator<std::string_view> decode_gzip_members(
                 head = 0;
                 tail = held;
             }
-            const ssize_t n = co_await dftracer::utils::io::pread(
-                fd, comp.get() + tail, want, static_cast<off_t>(next_read));
+            const io::IoResult n = co_await dftracer::utils::io::pread(
+                fd, comp.get() + tail, want,
+                static_cast<io::FileOffset>(next_read));
             if (n <= 0) {
                 throw DFTUtilsException(
                     ErrorCode::IO, "read error while decoding gzip member");

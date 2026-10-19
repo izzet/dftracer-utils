@@ -1,6 +1,8 @@
 #ifndef DFTRACER_UTILS_SERVER_CANCEL_H
 #define DFTRACER_UTILS_SERVER_CANCEL_H
 
+#include <dftracer/utils/core/io/types.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -14,7 +16,7 @@ namespace dftracer::utils::server {
 /// peer socket so a running handler can notice a client disconnect.
 struct CancelState {
     std::atomic<bool> flag{false};
-    int peer_fd = -1;
+    io::SocketHandle peer_fd = static_cast<io::SocketHandle>(-1);
     std::atomic<std::uint32_t> probe_tick{0};
 };
 
@@ -50,7 +52,9 @@ class CancelRegistry {
     /// An empty id yields an unregistered token, still usable for
     /// disconnect-driven cancellation. `peer_fd` (>= 0) enables the disconnect
     /// probe.
-    CancelToken create(const std::string& id, int peer_fd = -1);
+    CancelToken create(
+        const std::string& id,
+        io::SocketHandle peer_fd = static_cast<io::SocketHandle>(-1));
     void remove(const std::string& id);
     bool cancel(const std::string& id);
     std::size_t size() const;

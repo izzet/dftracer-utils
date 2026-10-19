@@ -7,6 +7,7 @@
 #include <dftracer/utils/core/common/scoped_fd.h>
 #include <dftracer/utils/core/coro/task.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/compress/gzip_member_reader.h>
 #include <dftracer/utils/utilities/fileio/streaming_file_writer_utility.h>
 #include <fcntl.h>
@@ -133,7 +134,7 @@ class FileDecompressorUtility {
             // Get compressed file size
             compressed_size = fs::file_size(input.input_path);
 
-            ssize_t fd_result =
+            io::IoResult fd_result =
                 co_await io::open(input.input_path.c_str(), O_RDONLY);
             if (fd_result < 0) {
                 co_return make_error(ErrorCode::IO,
@@ -141,8 +142,8 @@ class FileDecompressorUtility {
             }
             ScopedFd fd(static_cast<int>(fd_result));
 
-            struct stat st;
-            if (::fstat(fd.get(), &st) != 0) {
+            io::FileStat st;
+            if (co_await io::fstat(fd.get(), &st) != 0) {
                 co_return make_error(ErrorCode::IO,
                                      "Cannot stat file: " + input.input_path);
             }

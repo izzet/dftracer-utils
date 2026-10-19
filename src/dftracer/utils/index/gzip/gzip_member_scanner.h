@@ -5,6 +5,7 @@
 #include <dftracer/utils/core/coro/task.h>
 #include <dftracer/utils/core/coro/when_all.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -84,9 +85,9 @@ inline coro::CoroTask<std::uint8_t> scan_member_ranges(
             const std::size_t want = static_cast<std::size_t>(to - from);
             std::size_t got = 0;
             while (got < want) {
-                const ssize_t n = co_await dftracer::utils::io::pread(
+                const io::IoResult n = co_await dftracer::utils::io::pread(
                     fd, buf.data() + got, want - got,
-                    static_cast<off_t>(from + got));
+                    static_cast<io::FileOffset>(from + got));
                 if (n <= 0) co_return 0;
                 got += static_cast<std::size_t>(n);
             }
@@ -149,8 +150,8 @@ inline coro::CoroTask<bool> enumerate_gzip_member_candidates(
     unsigned char tail[4];
     // Named, not awaited in the condition (the GCC 12 trap in the coroutine
     // caveats).
-    const ssize_t got = co_await dftracer::utils::io::pread(
-        fd, tail, sizeof tail, static_cast<off_t>(file_size - 4));
+    const io::IoResult got = co_await dftracer::utils::io::pread(
+        fd, tail, sizeof tail, static_cast<io::FileOffset>(file_size - 4));
     if (got == 4) out.back().isize = load_le32(tail);
 
     for (std::size_t i = 0; i + 1 < out.size(); ++i)

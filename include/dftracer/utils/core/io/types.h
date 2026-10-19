@@ -1,6 +1,8 @@
 #ifndef DFTRACER_UTILS_CORE_IO_TYPES_H
 #define DFTRACER_UTILS_CORE_IO_TYPES_H
 
+#include <dftracer/utils/core/io/types_abi.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -23,22 +25,16 @@ using IoResult = std::intptr_t;
 using FileOffset = std::int64_t;
 using FileMode = int;
 using FileStat = struct ::_stat64;
-using SocketHandle = std::uintptr_t;
-using SocketLength = int;
-
-struct IoVec {
-    void* iov_base;
-    std::size_t iov_len;
-};
 #else
 using IoResult = ssize_t;
 using FileOffset = off_t;
 using FileMode = mode_t;
 using FileStat = struct ::stat;
-using SocketHandle = int;
-using SocketLength = socklen_t;
-using IoVec = struct ::iovec;
 #endif
+
+using SocketHandle = dftu_socket_t;
+using SocketLength = dftu_socklen_t;
+using IoVec = dftu_iovec;
 
 static_assert(sizeof(FileOffset) >= 8, "File offsets must support large files");
 static_assert(sizeof(IoResult) >= sizeof(SocketHandle),

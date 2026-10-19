@@ -113,28 +113,28 @@ class Io {
         return AsyncOp{io_ ? io_->fstat(h_->h, fd, out) : nullptr};
     }
     /// Scatter-gather sequential read; `iov`/`iovcnt` borrowed for the await.
-    AsyncOp readv(int fd, const struct iovec* iov, int iovcnt,
+    AsyncOp readv(int fd, const dftu_iovec* iov, int iovcnt,
                   std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->readv
                            ? io_->readv(h_->h, fd, iov, iovcnt, out_n)
                            : nullptr};
     }
     /// Scatter-gather sequential write; `iov`/`iovcnt` borrowed for the await.
-    AsyncOp writev(int fd, const struct iovec* iov, int iovcnt,
+    AsyncOp writev(int fd, const dftu_iovec* iov, int iovcnt,
                    std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->writev
                            ? io_->writev(h_->h, fd, iov, iovcnt, out_n)
                            : nullptr};
     }
     /// Scatter-gather positional read (seekable fds only).
-    AsyncOp preadv(int fd, const struct iovec* iov, int iovcnt,
-                   std::uint64_t off, std::int64_t* out_n) const {
+    AsyncOp preadv(int fd, const dftu_iovec* iov, int iovcnt, std::uint64_t off,
+                   std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->preadv
                            ? io_->preadv(h_->h, fd, iov, iovcnt, off, out_n)
                            : nullptr};
     }
     /// Scatter-gather positional write (seekable fds only).
-    AsyncOp pwritev(int fd, const struct iovec* iov, int iovcnt,
+    AsyncOp pwritev(int fd, const dftu_iovec* iov, int iovcnt,
                     std::uint64_t off, std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->pwritev
                            ? io_->pwritev(h_->h, fd, iov, iovcnt, off, out_n)
@@ -159,22 +159,23 @@ class Io {
     }
     /// Accept a connection on a listening socket; `addr`/`addrlen` may be null.
     /// `out_fd` receives the client fd.
-    AsyncOp accept(int fd, struct sockaddr* addr, socklen_t* addrlen,
-                   int* out_fd) const {
+    AsyncOp accept(dftu_socket_t fd, struct sockaddr* addr,
+                   dftu_socklen_t* addrlen,
+                   dftu_socket_result_t* out_fd) const {
         return AsyncOp{io_ && io_->accept
                            ? io_->accept(h_->h, fd, addr, addrlen, out_fd)
                            : nullptr};
     }
     /// Socket receive; `flags` are the recv(2) flags.
-    AsyncOp recv(int fd, void* buf, std::uint64_t len, int flags,
+    AsyncOp recv(dftu_socket_t fd, void* buf, std::uint64_t len, int flags,
                  std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->recv
                            ? io_->recv(h_->h, fd, buf, len, flags, out_n)
                            : nullptr};
     }
     /// Socket send; `flags` are the send(2) flags.
-    AsyncOp send(int fd, const void* buf, std::uint64_t len, int flags,
-                 std::int64_t* out_n) const {
+    AsyncOp send(dftu_socket_t fd, const void* buf, std::uint64_t len,
+                 int flags, std::int64_t* out_n) const {
         return AsyncOp{io_ && io_->send
                            ? io_->send(h_->h, fd, buf, len, flags, out_n)
                            : nullptr};

@@ -2,6 +2,8 @@
 #include <dftracer/utils/core/common/config.h>
 #include <dftracer/utils/core/common/scoped_fd.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/pipeline/pipeline.h>
 #include <dftracer/utils/core/task_graph/task_graph.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
@@ -15,7 +17,6 @@
 #include <dftracer/utils/utilities/fileio/types/types.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <cinttypes>
@@ -169,11 +170,11 @@ static coro::CoroTask<int> run_split(const SplitArgParse* cli) {
     std::string rechunk_dir;
     for (auto& path : input_files) {
         if (!path.ends_with(".gz")) continue;
-        ssize_t fd = co_await io::open(path.c_str(), O_RDONLY);
+        io::IoResult fd = co_await io::open(path.c_str(), O_RDONLY);
         if (fd < 0) continue;
         ScopedFd sfd(static_cast<int>(fd));
-        struct stat st;
-        if (::fstat(sfd.get(), &st) != 0) continue;
+        io::FileStat st;
+        if (io::platform_io::stat_fd(sfd.get(), &st) != 0) continue;
         const auto fsize = static_cast<std::uint64_t>(st.st_size);
         if (!co_await gzc::gzip_needs_rechunk(sfd.get(), fsize,
                                               gzc::RECHUNK_MEMBER_CAP)) {

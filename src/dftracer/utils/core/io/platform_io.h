@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_CORE_IO_PLATFORM_IO_H
 #define DFTRACER_UTILS_CORE_IO_PLATFORM_IO_H
 
+#include <dftracer/utils/core/common/platform_compat.h>
 #include <dftracer/utils/core/io/types.h>
 #include <fcntl.h>
 
@@ -24,6 +25,10 @@ int fsync(int fd) noexcept;
 int truncate(int fd, FileOffset length) noexcept;
 FileOffset seek(int fd, FileOffset offset, int whence) noexcept;
 int stat_fd(int fd, FileStat* buf) noexcept;
+int stat_path(const char* path, FileStat* buf) noexcept;
+int unlink(const char* path) noexcept;
+int try_lock_exclusive(int fd) noexcept;
+int unlock(int fd) noexcept;
 
 // Map an aligned range read-only. Failure returns nullptr and sets errno.
 // Windows requires allocation-granularity offsets, which can exceed page size.

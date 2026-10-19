@@ -2,6 +2,8 @@
 #include <dftracer/utils/core/common/object_pool.h>
 #include <dftracer/utils/core/io/io_backend.h>
 #include <dftracer/utils/core/io/io_thread_pool.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/pipeline/executor.h>
 #include <dftracer/utils/index/store/filesystem.h>
 #include <fcntl.h>
@@ -10,7 +12,6 @@
 #include <rocksdb/io_status.h>
 #include <rocksdb/slice.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -68,39 +69,41 @@ struct AsyncReadHandle {
         std::string(path), std::string(op) + ": " + std::strerror(errno));
 }
 
-ssize_t pread_sync(int fd, void* buf, std::size_t len, off_t offset) {
+io::IoResult pread_sync(int fd, void* buf, std::size_t len,
+                        io::FileOffset offset) {
     if (auto* backend = current_io_backend(); backend != nullptr) {
         return backend->submit_read_sync(fd, buf, len, offset);
     }
-    return ::pread(fd, buf, len, offset);
+    return io::platform_io::pread(fd, buf, len, offset);
 }
 
-ssize_t pwrite_sync(int fd, const void* buf, std::size_t len, off_t offset) {
+io::IoResult pwrite_sync(int fd, const void* buf, std::size_t len,
+                         io::FileOffset offset) {
     if (auto* backend = current_io_backend(); backend != nullptr) {
         return backend->submit_write_sync(fd, buf, len, offset);
     }
-    return ::pwrite(fd, buf, len, offset);
+    return io::platform_io::pwrite(fd, buf, len, offset);
 }
 
 int fsync_sync(int fd) {
     if (auto* backend = current_io_backend(); backend != nullptr) {
         return backend->submit_fsync_sync(fd);
     }
-    return ::fsync(fd);
+    return io::platform_io::fsync(fd);
 }
 
-int ftruncate_sync(int fd, off_t length) {
+int ftruncate_sync(int fd, io::FileOffset length) {
     if (auto* backend = current_io_backend(); backend != nullptr) {
         return backend->submit_ftruncate_sync(fd, length);
     }
-    return ::ftruncate(fd, length);
+    return io::platform_io::truncate(fd, length);
 }
 
-int fstat_sync(int fd, struct stat* st) {
+int fstat_sync(int fd, io::FileStat* st) {
     if (auto* backend = current_io_backend(); backend != nullptr) {
         return backend->submit_fstat_sync(fd, st);
     }
-    return ::fstat(fd, st);
+    return io::platform_io::stat_fd(fd, st);
 }
 
 class DfTracerSequentialFile final : public ::rocksdb::FSSequentialFile {
@@ -110,7 +113,7 @@ class DfTracerSequentialFile final : public ::rocksdb::FSSequentialFile {
 
     ~DfTracerSequentialFile() override {
         if (fd_ >= 0) {
-            ::close(fd_);
+            io::platform_io::close(fd_);
         }
     }
 
@@ -118,8 +121,8 @@ class DfTracerSequentialFile final : public ::rocksdb::FSSequentialFile {
                              ::rocksdb::Slice* result, char* scratch,
                              ::rocksdb::IODebugContext*) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        const ssize_t bytes =
-            pread_sync(fd_, scratch, n, static_cast<off_t>(offset_));
+        const io::IoResult bytes =
+            pread_sync(fd_, scratch, n, static_cast<io::FileOffset>(offset_));
         if (bytes < 0) {
             return io_error("read", path_);
         }
@@ -153,7 +156,7 @@ class DfTracerRandomAccessFile final : public ::rocksdb::FSRandomAccessFile {
 
     ~DfTracerRandomAccessFile() override {
         if (fd_ >= 0) {
-            ::close(fd_);
+            io::platform_io::close(fd_);
         }
     }
 
@@ -161,8 +164,8 @@ class DfTracerRandomAccessFile final : public ::rocksdb::FSRandomAccessFile {
                              const ::rocksdb::IOOptions&,
                              ::rocksdb::Slice* result, char* scratch,
                              ::rocksdb::IODebugContext*) const override {
-        const ssize_t bytes =
-            pread_sync(fd_, scratch, n, static_cast<off_t>(offset));
+        const io::IoResult bytes =
+            pread_sync(fd_, scratch, n, static_cast<io::FileOffset>(offset));
         if (bytes < 0) {
             return io_error("pread", path_);
         }
@@ -187,7 +190,7 @@ class DfTracerRandomAccessFile final : public ::rocksdb::FSRandomAccessFile {
     }
 
     ::rocksdb::IOStatus GetFileSize(std::uint64_t* result) override {
-        struct stat st{};
+        io::FileStat st{};
         if (fstat_sync(fd_, &st) != 0) {
             return io_error("fstat", path_);
         }
@@ -209,7 +212,7 @@ class DfTracerWritableFile final : public ::rocksdb::FSWritableFile {
     DfTracerWritableFile(std::string path, int fd,
                          const ::rocksdb::FileOptions& options)
         : ::rocksdb::FSWritableFile(options), path_(std::move(path)), fd_(fd) {
-        struct stat st{};
+        io::FileStat st{};
         if (fstat_sync(fd_, &st) == 0) {
             size_ = static_cast<std::uint64_t>(st.st_size);
         }
@@ -240,7 +243,7 @@ class DfTracerWritableFile final : public ::rocksdb::FSWritableFile {
                                  const ::rocksdb::IOOptions&,
                                  ::rocksdb::IODebugContext*) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (ftruncate_sync(fd_, static_cast<off_t>(size)) != 0) {
+        if (ftruncate_sync(fd_, static_cast<io::FileOffset>(size)) != 0) {
             return io_error("ftruncate", path_);
         }
         size_ = size;
@@ -291,8 +294,8 @@ class DfTracerWritableFile final : public ::rocksdb::FSWritableFile {
    private:
     ::rocksdb::IOStatus write_at(const ::rocksdb::Slice& data,
                                  std::uint64_t offset) {
-        const ssize_t bytes = pwrite_sync(fd_, data.data(), data.size(),
-                                          static_cast<off_t>(offset));
+        const io::IoResult bytes = pwrite_sync(
+            fd_, data.data(), data.size(), static_cast<io::FileOffset>(offset));
         if (bytes < 0 || static_cast<std::size_t>(bytes) != data.size()) {
             return io_error("pwrite", path_);
         }
@@ -304,7 +307,7 @@ class DfTracerWritableFile final : public ::rocksdb::FSWritableFile {
         if (fd_ < 0) {
             return ::rocksdb::IOStatus::OK();
         }
-        if (::close(fd_) != 0) {
+        if (io::platform_io::close(fd_) != 0) {
             return io_error("close", path_);
         }
         fd_ = -1;
@@ -636,7 +639,7 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         const std::string& fname, const ::rocksdb::FileOptions&,
         std::unique_ptr<::rocksdb::FSSequentialFile>* result,
         ::rocksdb::IODebugContext*) override {
-        int fd = ::open(fname.c_str(), O_RDONLY | O_CLOEXEC);
+        int fd = io::platform_io::open(fname.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
             return io_error("open", fname);
         }
@@ -648,7 +651,7 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         const std::string& fname, const ::rocksdb::FileOptions&,
         std::unique_ptr<::rocksdb::FSRandomAccessFile>* result,
         ::rocksdb::IODebugContext*) override {
-        int fd = ::open(fname.c_str(), O_RDONLY | O_CLOEXEC);
+        int fd = io::platform_io::open(fname.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
             return io_error("open", fname);
         }
@@ -660,8 +663,8 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         const std::string& fname, const ::rocksdb::FileOptions& file_opts,
         std::unique_ptr<::rocksdb::FSWritableFile>* result,
         ::rocksdb::IODebugContext*) override {
-        int fd =
-            ::open(fname.c_str(), O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0644);
+        int fd = io::platform_io::open(
+            fname.c_str(), O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0644);
         if (fd < 0) {
             return io_error("open", fname);
         }
@@ -673,7 +676,8 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         const std::string& fname, const ::rocksdb::FileOptions& file_opts,
         std::unique_ptr<::rocksdb::FSWritableFile>* result,
         ::rocksdb::IODebugContext*) override {
-        int fd = ::open(fname.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+        int fd = io::platform_io::open(fname.c_str(),
+                                       O_CREAT | O_RDWR | O_CLOEXEC, 0644);
         if (fd < 0) {
             return io_error("open", fname);
         }
@@ -686,7 +690,7 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         const ::rocksdb::FileOptions& file_opts,
         std::unique_ptr<::rocksdb::FSWritableFile>* result,
         ::rocksdb::IODebugContext*) override {
-        ::unlink(fname.c_str());
+        io::platform_io::unlink(fname.c_str());
         if (::rename(old_fname.c_str(), fname.c_str()) != 0) {
             return io_error("rename", old_fname);
         }
@@ -760,10 +764,10 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
             handle->path = path;
         }
         if (auto* backend = current_io_backend(); backend != nullptr) {
-            backend->submit_pread_callback(fd, handle->scratch, handle->len,
-                                           static_cast<off_t>(handle->offset),
-                                           &DfTracerFileSystem::on_pread_done,
-                                           handle);
+            backend->submit_pread_callback(
+                fd, handle->scratch, handle->len,
+                static_cast<io::FileOffset>(handle->offset),
+                &DfTracerFileSystem::on_pread_done, handle);
             // RocksDB submits a read then blocks polling for it, so a read left
             // in the backend's submission batch would never dispatch. Flush now
             // rather than relying on some other thread to drain the batch.
@@ -783,8 +787,8 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
     static ::rocksdb::IOStatus read_async_impl(
         int fd, std::string_view path, std::uint64_t offset, std::size_t n,
         ::rocksdb::Slice* result, char* scratch, ::rocksdb::IODebugContext*) {
-        const ssize_t bytes =
-            ::pread(fd, scratch, n, static_cast<off_t>(offset));
+        const io::IoResult bytes = io::platform_io::pread(
+            fd, scratch, n, static_cast<io::FileOffset>(offset));
         if (bytes < 0) {
             return io_error("pread", path);
         }
@@ -816,7 +820,7 @@ class DfTracerFileSystem final : public LocalFileSystemWrapper {
         completions_cv_.notify_all();
     }
 
-    static void on_pread_done(void* context, ssize_t result) noexcept {
+    static void on_pread_done(void* context, io::IoResult result) noexcept {
         auto* handle = static_cast<AsyncReadHandle*>(context);
         ::rocksdb::IOStatus status = ::rocksdb::IOStatus::OK();
         ::rocksdb::Slice slice;

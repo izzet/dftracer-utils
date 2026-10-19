@@ -7,6 +7,7 @@
 #include <dftracer/utils/core/common/scoped_fd.h>
 #include <dftracer/utils/core/coro/task.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/gzip_line_writer.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -50,8 +51,8 @@ inline coro::CoroTask<bool> gzip_needs_rechunk(int fd, std::uint64_t file_size,
             if (off >= file_size) break;
             const std::size_t want = static_cast<std::size_t>(
                 std::min<std::uint64_t>(in.size(), file_size - off));
-            const ssize_t n = co_await io::pread(fd, in.data(), want,
-                                                 static_cast<off_t>(off));
+            const io::IoResult n = co_await io::pread(
+                fd, in.data(), want, static_cast<io::FileOffset>(off));
             if (n <= 0) break;
             off += static_cast<std::uint64_t>(n);
             zs.next_in = in.data();
@@ -89,14 +90,14 @@ inline coro::CoroTask<void> gzip_rechunk_to_members(const std::string& in_path,
         member_size = constants::indexer::DEFAULT_CHECKPOINT_SIZE;
     if (level < 0) level = 6;
 
-    ssize_t in_fd_res = co_await io::open(in_path.c_str(), O_RDONLY);
+    io::IoResult in_fd_res = co_await io::open(in_path.c_str(), O_RDONLY);
     if (in_fd_res < 0) {
         throw DFTUtilsException(ErrorCode::IO, "Cannot open file: " + in_path);
     }
     ScopedFd in_fd(static_cast<int>(in_fd_res));
 
-    struct stat st;
-    if (::fstat(in_fd.get(), &st) != 0) {
+    io::FileStat st;
+    if (co_await io::fstat(in_fd.get(), &st) != 0) {
         throw DFTUtilsException(ErrorCode::IO, "Cannot stat file: " + in_path);
     }
     const auto file_size = static_cast<std::uint64_t>(st.st_size);
@@ -139,8 +140,8 @@ inline coro::CoroTask<void> gzip_rechunk_to_members(const std::string& in_path,
             if (off >= file_size) break;
             const std::size_t want = static_cast<std::size_t>(
                 std::min<std::uint64_t>(in.size(), file_size - off));
-            const ssize_t n = co_await io::pread(in_fd.get(), in.data(), want,
-                                                 static_cast<off_t>(off));
+            const io::IoResult n = co_await io::pread(
+                in_fd.get(), in.data(), want, static_cast<io::FileOffset>(off));
             if (n <= 0) break;
             off += static_cast<std::uint64_t>(n);
             co_await feed(
@@ -152,8 +153,8 @@ inline coro::CoroTask<void> gzip_rechunk_to_members(const std::string& in_path,
             if (off >= file_size) break;
             const std::size_t want = static_cast<std::size_t>(
                 std::min<std::uint64_t>(in.size(), file_size - off));
-            const ssize_t n = co_await io::pread(in_fd.get(), in.data(), want,
-                                                 static_cast<off_t>(off));
+            const io::IoResult n = co_await io::pread(
+                in_fd.get(), in.data(), want, static_cast<io::FileOffset>(off));
             if (n <= 0) break;
             off += static_cast<std::uint64_t>(n);
             zs.next_in = in.data();
@@ -197,11 +198,11 @@ inline coro::CoroTask<std::string> rechunk_to_dir_if_needed(
     std::string path, std::string dir, std::size_t member_size,
     bool& did_split) {
     did_split = false;
-    ssize_t fd = co_await io::open(path.c_str(), O_RDONLY);
+    io::IoResult fd = co_await io::open(path.c_str(), O_RDONLY);
     if (fd < 0) co_return path;
     ScopedFd sfd(static_cast<int>(fd));
-    struct stat st;
-    if (::fstat(sfd.get(), &st) != 0) co_return path;
+    io::FileStat st;
+    if (co_await io::fstat(sfd.get(), &st) != 0) co_return path;
     const auto fsize = static_cast<std::uint64_t>(st.st_size);
     if (fsize == 0) co_return path;
     unsigned char magic[2] = {0, 0};
@@ -216,9 +217,14 @@ inline coro::CoroTask<std::string> rechunk_to_dir_if_needed(
     std::string split_path = dir + "/" + fs::path(path).filename().string();
     if (plain && !split_path.ends_with(".gz")) split_path += ".gz";
     did_split = true;
-    struct stat sst;
-    const bool fresh =
-        ::stat(split_path.c_str(), &sst) == 0 && sst.st_mtime >= st.st_mtime;
+    io::FileStat sst;
+    bool fresh = false;
+    const auto split_fd = co_await io::open(split_path.c_str(), O_RDONLY);
+    if (split_fd >= 0) {
+        ScopedFd split(static_cast<int>(split_fd));
+        fresh = co_await io::fstat(split.get(), &sst) == 0 &&
+                sst.st_mtime >= st.st_mtime;
+    }
     if (!fresh) {
         fs::create_directories(dir);
         co_await gzip_rechunk_to_members(path, split_path, member_size, 6);

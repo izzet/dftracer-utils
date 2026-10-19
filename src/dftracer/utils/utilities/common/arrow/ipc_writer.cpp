@@ -1,4 +1,5 @@
 #include <dftracer/utils/core/common/config.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #ifdef DFTRACER_UTILS_ENABLE_ARROW_IPC
 
 #include <dftracer/utils/core/coro/when_all.h>
@@ -10,8 +11,6 @@
 #include <nanoarrow/ipc/flatcc_generated.h>
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow_ipc.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
 #ifdef DFTRACER_UTILS_ENABLE_ZSTD
 #include <zstd.h>
@@ -226,7 +225,7 @@ IpcWriter::~IpcWriter() {
     if (is_open()) {
         // Sync close in destructor - not ideal but safe
         if (fd_ >= 0) {
-            ::close(fd_);
+            io::platform_io::close(fd_);
         }
         reset_state();
     }
@@ -245,7 +244,7 @@ IpcWriter::IpcWriter(IpcWriter&& other) noexcept {
 
 IpcWriter& IpcWriter::operator=(IpcWriter&& other) noexcept {
     if (this != &other) {
-        if (fd_ >= 0) ::close(fd_);
+        if (fd_ >= 0) io::platform_io::close(fd_);
         fd_ = other.fd_;
         write_offset_ = other.write_offset_;
         buffer_pool_ = std::move(other.buffer_pool_);
@@ -507,7 +506,7 @@ coro::CoroTask<int> IpcWriter::write_compressed(CompressedBatch& cb) {
     block.body_length = cb.body_length;
 
     // Vectored write: header + body
-    struct iovec iov[2];
+    io::IoVec iov[2];
     iov[0].iov_base = cb.header.data();
     iov[0].iov_len = cb.header.size();
     iov[1].iov_base = cb.body.data().data();

@@ -1,9 +1,9 @@
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/parallel/parallel_writer.h>
 #include <dftracer/utils/utilities/fileio/parallel/pwrite_fully.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -20,8 +20,8 @@ class StripedWriter final : public ParallelWriter {
                              bool /*gzip_extension*/,
                              CoroScope* /*scope*/) override {
         path_ = std::move(path);
-        ssize_t fd = co_await ::dftracer::utils::io::open(
-            path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        io::IoResult fd = co_await io::open(path_.c_str(),
+                                            O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd < 0) {
             DFTRACER_UTILS_LOG_ERROR("Failed to open striped output: %s",
                                      path_.c_str());
@@ -53,7 +53,7 @@ class StripedWriter final : public ParallelWriter {
         co_return co_await pwrite_fully(
             fd_, path_.c_str(),
             reinterpret_cast<const std::uint8_t*>(data.data()), data.size(),
-            static_cast<off_t>(base));
+            static_cast<io::FileOffset>(base));
     }
 
     coro::CoroTask<int> write_footer(ByteView data) override {
@@ -62,7 +62,7 @@ class StripedWriter final : public ParallelWriter {
 
     coro::CoroTask<int> close() override {
         if (fd_ < 0) co_return 0;
-        auto rc = co_await ::dftracer::utils::io::close(fd_);
+        auto rc = co_await io::close(fd_);
         fd_ = -1;
         co_return static_cast<int>(rc);
     }
@@ -106,7 +106,7 @@ class StripedWriter final : public ParallelWriter {
         co_return co_await pwrite_fully(
             fd_, path_.c_str(),
             reinterpret_cast<const std::uint8_t*>(data.data()), data.size(),
-            static_cast<off_t>(base));
+            static_cast<io::FileOffset>(base));
     }
 
     std::string path_;

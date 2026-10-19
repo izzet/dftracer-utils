@@ -16,6 +16,9 @@
 #include <dftracer/utils/server/viz_ui.h>
 #include <dftracer/utils/utilities/reader/internal/member_decode_cache.h>
 
+// Native address definitions stay out of the public Windows I/O headers.
+#include <dftracer/utils/server/socket.h>
+
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -209,7 +212,7 @@ static coro::CoroTask<int> run_server(const ServerArgParse* cli) {
 #endif
             co_await listener.accept_loop(
                 ctx,
-                [router_ptr](int client_fd,
+                [router_ptr](io::SocketHandle client_fd,
                              struct sockaddr_in addr) -> coro::CoroTask<void> {
                     co_await handle_connection(client_fd, addr, *router_ptr);
                 });

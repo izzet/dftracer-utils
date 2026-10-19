@@ -10,6 +10,7 @@
 # +++++++++++++++++++++++++++++++++++++++++
 
 set(UTILITIES_TEST_SOURCES
+    reader/test_platform_readers.cpp
 
     # Statistics
     common/statistics/test_log2_histogram.cpp
@@ -313,6 +314,7 @@ add_library(bad_abi_version_plugin MODULE plugins/bad_abi_version_plugin.c)
 set_target_properties(
   bad_abi_version_plugin
   PROPERTIES OUTPUT_NAME bad_abi_version_plugin
+             WINDOWS_EXPORT_ALL_SYMBOLS ON
              PREFIX ""
              POSITION_INDEPENDENT_CODE ON
              C_STANDARD 11

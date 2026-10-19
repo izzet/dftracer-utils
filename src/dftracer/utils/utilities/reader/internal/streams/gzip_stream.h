@@ -2,12 +2,13 @@
 #define DFTRACER_UTILS_UTILITIES_READER_INTERNAL_STREAMS_GZIP_STREAM_H
 
 #include <dftracer/utils/core/common/compiler_compat.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/index/gzip/checkpoint_indexer.h>
 #include <dftracer/utils/utilities/reader/error.h>
 #include <dftracer/utils/utilities/reader/internal/inflater.h>
 #include <dftracer/utils/utilities/reader/internal/streams/stream.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cinttypes>
@@ -20,7 +21,7 @@ namespace dftracer::utils::utilities::reader::internal {
 class GzipStream : public StreamBase {
    protected:
     int fd_ = -1;
-    mutable off_t file_offset_ = 0;
+    mutable io::FileOffset file_offset_ = 0;
     mutable ReaderInflater inflater_;
     std::size_t current_position_;
     std::size_t target_end_bytes_;
@@ -129,7 +130,7 @@ class GzipStream : public StreamBase {
         is_active_ = false;
         is_finished_ = false;
         if (fd_ >= 0) {
-            ::close(fd_);
+            io::platform_io::close(fd_);
             fd_ = -1;
         }
         file_offset_ = 0;
@@ -141,7 +142,7 @@ class GzipStream : public StreamBase {
 
    protected:
     int open_file(const std::string &path) {
-        int fd = ::open(path.c_str(), O_RDONLY);
+        int fd = io::platform_io::open(path.c_str(), O_RDONLY);
         if (fd < 0) {
             throw ReaderError(ReaderError::FILE_IO_ERROR,
                               "Failed to open file: " + path);

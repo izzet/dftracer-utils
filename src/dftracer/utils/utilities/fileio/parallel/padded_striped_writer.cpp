@@ -2,11 +2,11 @@
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/coro/channel.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
 #include <dftracer/utils/utilities/fileio/parallel/parallel_writer.h>
 #include <dftracer/utils/utilities/fileio/parallel/pwrite_fully.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <cstdint>
@@ -97,8 +97,8 @@ class PaddedStripedWriter : public ParallelWriter {
                              bool /*gzip_extension*/,
                              CoroScope* /*scope*/) override {
         path_ = std::move(path);
-        ssize_t fd = co_await ::dftracer::utils::io::open(
-            path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        io::IoResult fd = co_await io::open(path_.c_str(),
+                                            O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd < 0) {
             DFTRACER_UTILS_LOG_ERROR("Failed to open padded output: %s",
                                      path_.c_str());
@@ -184,19 +184,20 @@ class PaddedStripedWriter : public ParallelWriter {
         if (co_await drain_packer() != 0) co_return -1;
         const auto stripes = next_stripe_idx_.load(std::memory_order_relaxed);
         const auto offset = (stripes + 1) * stripe_size_;  // +1 for header
-        co_return co_await pwrite_all(data, static_cast<off_t>(offset));
+        co_return co_await pwrite_all(data,
+                                      static_cast<io::FileOffset>(offset));
     }
 
     coro::CoroTask<int> close() override {
         if (co_await drain_packer() != 0) {
             if (fd_ >= 0) {
-                co_await ::dftracer::utils::io::close(fd_);
+                co_await io::close(fd_);
                 fd_ = -1;
             }
             co_return -1;
         }
         if (fd_ < 0) co_return 0;
-        auto rc = co_await ::dftracer::utils::io::close(fd_);
+        auto rc = co_await io::close(fd_);
         fd_ = -1;
         co_return static_cast<int>(rc);
     }
@@ -254,8 +255,9 @@ class PaddedStripedWriter : public ParallelWriter {
                  emit_idx](CoroScope&) mutable -> coro::CoroTask<int> {
                     pad_to_stripe(p, stripe_size_);
                     const auto offset = (emit_idx + 1) * stripe_size_;
-                    co_return co_await pwrite_bytes(p.data(), p.size(),
-                                                    static_cast<off_t>(offset));
+                    co_return co_await pwrite_bytes(
+                        p.data(), p.size(),
+                        static_cast<io::FileOffset>(offset));
                 }));
             co_return;
         };
@@ -289,14 +291,14 @@ class PaddedStripedWriter : public ParallelWriter {
         co_return final_rc;
     }
 
-    coro::CoroTask<int> pwrite_all(ByteView data, off_t offset) {
+    coro::CoroTask<int> pwrite_all(ByteView data, io::FileOffset offset) {
         co_return co_await pwrite_bytes(
             reinterpret_cast<const std::uint8_t*>(data.data()), data.size(),
             offset);
     }
 
     coro::CoroTask<int> pwrite_bytes(const std::uint8_t* bytes,
-                                     std::size_t size, off_t offset) {
+                                     std::size_t size, io::FileOffset offset) {
         co_return co_await pwrite_fully(fd_, path_.c_str(), bytes, size,
                                         offset);
     }

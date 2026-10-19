@@ -2,6 +2,7 @@
 #define DFTRACER_UTILS_UTILITIES_COMMON_ARROW_IPC_WRITER_H
 
 #include <dftracer/utils/core/common/config.h>
+#include <dftracer/utils/core/io/types.h>
 #ifdef DFTRACER_UTILS_ENABLE_ARROW_IPC
 
 #include <dftracer/utils/core/coro/task.h>
@@ -133,7 +134,7 @@ class IpcWriter {
 
    private:
     int fd_ = -1;
-    off_t write_offset_ = 0;
+    io::FileOffset write_offset_ = 0;
     BufferPool buffer_pool_;
     bool schema_written_ = false;
     IpcCompression compression_ = DEFAULT_ARROW_IPC_COMPRESSION;

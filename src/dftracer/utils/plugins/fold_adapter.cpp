@@ -9,6 +9,7 @@
 #include <dftracer/utils/core/coro/when_any.h>
 #include <dftracer/utils/core/coro/yield.h>
 #include <dftracer/utils/core/io/ops.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/runtime.h>
 #include <dftracer/utils/dataframe/abi.h>
 #include <dftracer/utils/dataframe/agg_expr.h>
@@ -119,8 +120,8 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
                      int* out_fd) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](std::string p, int fl, int md, int* ofd) -> coro::CoroTask<void> {
-            int fd = static_cast<int>(
-                co_await io::open(p.c_str(), fl, static_cast<mode_t>(md)));
+            int fd = static_cast<int>(co_await io::open(
+                p.c_str(), fl, static_cast<io::FileMode>(md)));
             if (ofd) *ofd = fd;
         }(std::string(path ? path : ""), flags, mode, out_fd));
 }
@@ -138,7 +139,8 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, void* b, std::uint64_t l,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::read(f, b, static_cast<std::size_t>(l));
+            io::IoResult n =
+                co_await io::read(f, b, static_cast<std::size_t>(l));
             if (on) *on = n;
         }(fd, buf, len, out_n));
 }
@@ -148,7 +150,8 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, const void* b, std::uint64_t l,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::write(f, b, static_cast<std::size_t>(l));
+            io::IoResult n =
+                co_await io::write(f, b, static_cast<std::size_t>(l));
             if (on) *on = n;
         }(fd, buf, len, out_n));
 }
@@ -158,8 +161,9 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, void* b, std::uint64_t l, std::uint64_t o,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::pread(f, b, static_cast<std::size_t>(l),
-                                           static_cast<off_t>(o));
+            io::IoResult n =
+                co_await io::pread(f, b, static_cast<std::size_t>(l),
+                                   static_cast<io::FileOffset>(o));
             if (on) *on = n;
         }(fd, buf, len, off, out_n));
 }
@@ -169,8 +173,9 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, const void* b, std::uint64_t l, std::uint64_t o,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::pwrite(f, b, static_cast<std::size_t>(l),
-                                            static_cast<off_t>(o));
+            io::IoResult n =
+                co_await io::pwrite(f, b, static_cast<std::size_t>(l),
+                                    static_cast<io::FileOffset>(o));
             if (on) *on = n;
         }(fd, buf, len, off, out_n));
 }
@@ -187,7 +192,7 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, std::uint64_t l, int* orc) -> coro::CoroTask<void> {
             int rc = static_cast<int>(
-                co_await io::ftruncate(f, static_cast<off_t>(l)));
+                co_await io::ftruncate(f, static_cast<io::FileOffset>(l)));
             if (orc) *orc = rc;
         }(fd, len, out_rc));
 }
@@ -195,59 +200,66 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
 ::dftu_task* io_fstat(void* h, int fd, dftu_stat* out) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, dftu_stat* o) -> coro::CoroTask<void> {
-            struct stat st{};
-            ssize_t rc = co_await io::fstat(f, &st);
+            io::FileStat st{};
+            io::IoResult rc = co_await io::fstat(f, &st);
             if (o && rc == 0) {
                 o->size = static_cast<std::uint64_t>(st.st_size);
-#if defined(__APPLE__)
+#if defined(_WIN32)
+                o->mtime_ns =
+                    static_cast<std::uint64_t>(st.st_mtime) * 1000000000ull;
+#elif defined(__APPLE__)
                 const struct timespec& mt = st.st_mtimespec;
 #else
                 const struct timespec& mt = st.st_mtim;
 #endif
+#ifndef _WIN32
                 o->mtime_ns =
                     static_cast<std::uint64_t>(mt.tv_sec) * 1000000000ull +
                     static_cast<std::uint64_t>(mt.tv_nsec);
+#endif
                 o->mode = static_cast<std::uint32_t>(st.st_mode);
             }
         }(fd, out));
 }
 
-::dftu_task* io_readv(void* h, int fd, const struct iovec* iov, int iovcnt,
+::dftu_task* io_readv(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                       std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, const struct iovec* v, int c,
+        [](int f, const dftu_iovec* v, int c,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::readv(f, v, c);
+            io::IoResult n = co_await io::readv(f, v, c);
             if (on) *on = n;
         }(fd, iov, iovcnt, out_n));
 }
 
-::dftu_task* io_writev(void* h, int fd, const struct iovec* iov, int iovcnt,
+::dftu_task* io_writev(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                        std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, const struct iovec* v, int c,
+        [](int f, const dftu_iovec* v, int c,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::writev(f, v, c);
+            io::IoResult n = co_await io::writev(f, v, c);
             if (on) *on = n;
         }(fd, iov, iovcnt, out_n));
 }
 
-::dftu_task* io_preadv(void* h, int fd, const struct iovec* iov, int iovcnt,
+::dftu_task* io_preadv(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                        std::uint64_t off, std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, const struct iovec* v, int c, std::uint64_t o,
+        [](int f, const dftu_iovec* v, int c, std::uint64_t o,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::preadv(f, v, c, static_cast<off_t>(o));
+            io::IoResult n =
+                co_await io::preadv(f, v, c, static_cast<io::FileOffset>(o));
             if (on) *on = n;
         }(fd, iov, iovcnt, off, out_n));
 }
 
-::dftu_task* io_pwritev(void* h, int fd, const struct iovec* iov, int iovcnt,
+::dftu_task* io_pwritev(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                         std::uint64_t off, std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, const struct iovec* v, int c, std::uint64_t o,
+        [](int f, const dftu_iovec* v, int c, std::uint64_t o,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::pwritev(f, v, c, static_cast<off_t>(o));
+            io::IoResult n =
+                co_await io::pwritev(f, v, c, static_cast<io::FileOffset>(o));
             if (on) *on = n;
         }(fd, iov, iovcnt, off, out_n));
 }
@@ -257,7 +269,8 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int f, std::int64_t o, int w,
            std::int64_t* oo) -> coro::CoroTask<void> {
-            off_t r = co_await io::lseek(f, static_cast<off_t>(o), w);
+            io::FileOffset r =
+                co_await io::lseek(f, static_cast<io::FileOffset>(o), w);
             if (oo) *oo = static_cast<std::int64_t>(r);
         }(fd, off, whence, out_off));
 }
@@ -267,39 +280,41 @@ void host_log(void* h, std::uint8_t level, const char* s, std::uint32_t n) {
     return static_cast<PluginFold*>(h)->emplace_task(
         [](int ofd, int ifd, std::uint64_t o, std::uint64_t c,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n = co_await io::sendfile(ofd, ifd, static_cast<off_t>(o),
-                                              static_cast<std::size_t>(c));
+            io::IoResult n =
+                co_await io::sendfile(ofd, ifd, static_cast<io::FileOffset>(o),
+                                      static_cast<std::size_t>(c));
             if (on) *on = n;
         }(out_fd, in_fd, off, count, out_n));
 }
 
-::dftu_task* io_accept(void* h, int fd, struct sockaddr* addr,
-                       socklen_t* addrlen, int* out_fd) {
+::dftu_task* io_accept(void* h, dftu_socket_t fd, struct sockaddr* addr,
+                       dftu_socklen_t* addrlen, dftu_socket_result_t* out_fd) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, struct sockaddr* a, socklen_t* al,
-           int* ofd) -> coro::CoroTask<void> {
-            int cfd = static_cast<int>(co_await io::accept(f, a, al));
+        [](dftu_socket_t f, struct sockaddr* a, dftu_socklen_t* al,
+           dftu_socket_result_t* ofd) -> coro::CoroTask<void> {
+            const auto cfd = static_cast<dftu_socket_result_t>(
+                co_await io::accept(f, a, al));
             if (ofd) *ofd = cfd;
         }(fd, addr, addrlen, out_fd));
 }
 
-::dftu_task* io_recv(void* h, int fd, void* buf, std::uint64_t len, int flags,
-                     std::int64_t* out_n) {
+::dftu_task* io_recv(void* h, dftu_socket_t fd, void* buf, std::uint64_t len,
+                     int flags, std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, void* b, std::uint64_t l, int fl,
+        [](dftu_socket_t f, void* b, std::uint64_t l, int fl,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n =
+            io::IoResult n =
                 co_await io::recv(f, b, static_cast<std::size_t>(l), fl);
             if (on) *on = n;
         }(fd, buf, len, flags, out_n));
 }
 
-::dftu_task* io_send(void* h, int fd, const void* buf, std::uint64_t len,
-                     int flags, std::int64_t* out_n) {
+::dftu_task* io_send(void* h, dftu_socket_t fd, const void* buf,
+                     std::uint64_t len, int flags, std::int64_t* out_n) {
     return static_cast<PluginFold*>(h)->emplace_task(
-        [](int f, const void* b, std::uint64_t l, int fl,
+        [](dftu_socket_t f, const void* b, std::uint64_t l, int fl,
            std::int64_t* on) -> coro::CoroTask<void> {
-            ssize_t n =
+            io::IoResult n =
                 co_await io::send(f, b, static_cast<std::size_t>(l), fl);
             if (on) *on = n;
         }(fd, buf, len, flags, out_n));

@@ -5,6 +5,8 @@
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/coro/task.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/index/gzip/gzip_member_record.h>
 #include <dftracer/utils/utilities/fileio/compress/libdeflate_gzip.h>
 #include <dftracer/utils/utilities/reader/internal/member_decode_cache.h>
@@ -58,7 +60,7 @@ class ReaderInflater {
 
     /// Start reading from `file_offset` (0 = start of file). `expected_out`
     /// (0 = default) pre-sizes the decode buffer to a known uncompressed span.
-    coro::CoroTask<bool> initialize(int fd, off_t& offset,
+    coro::CoroTask<bool> initialize(int fd, io::FileOffset& offset,
                                     std::uint64_t file_offset = 0,
                                     int /*window_bits*/ = 0,
                                     std::size_t expected_out = 0) {
@@ -71,7 +73,7 @@ class ReaderInflater {
     /// member.c_offset. A HEAD or RESTART piece starts a zlib stream there;
     /// `window` is the 32 KiB window of a RESTART piece.
     coro::CoroTask<bool> seek_to_member(
-        int fd, off_t& offset,
+        int fd, io::FileOffset& offset,
         const dftracer::utils::index::gzip::GzipMemberRecord& member,
         const std::string& window, std::size_t expected_out = 0) {
         DFTRACER_UTILS_LOG_DEBUG("Seeking to member %" PRIu64
@@ -91,8 +93,8 @@ class ReaderInflater {
         unsigned char prime = 0;
         if (member.bits > 0) {
             if (co_await dftracer::utils::io::pread(
-                    fd, &prime, 1, static_cast<off_t>(member.c_offset - 1)) !=
-                1) {
+                    fd, &prime, 1,
+                    static_cast<io::FileOffset>(member.c_offset - 1)) != 1) {
                 co_return false;
             }
         }
@@ -114,8 +116,9 @@ class ReaderInflater {
 
     /// Fill up to `len` uncompressed bytes into `buf`. `bytes_out` is the
     /// amount produced; 0 means end of stream.
-    coro::CoroTask<bool> read(int fd, off_t& offset, unsigned char* buf,
-                              std::size_t len, std::size_t& bytes_out) {
+    coro::CoroTask<bool> read(int fd, io::FileOffset& offset,
+                              unsigned char* buf, std::size_t len,
+                              std::size_t& bytes_out) {
         bytes_out = 0;
         while (bytes_out < len) {
             if (member_pos_ >= member_len_) {
@@ -136,7 +139,7 @@ class ReaderInflater {
     }
 
     /// Discard `bytes_to_skip` uncompressed bytes.
-    coro::CoroTask<bool> skip_bytes(int fd, off_t& offset,
+    coro::CoroTask<bool> skip_bytes(int fd, io::FileOffset& offset,
                                     std::size_t bytes_to_skip) {
         while (bytes_to_skip > 0) {
             if (member_pos_ >= member_len_) {
@@ -175,15 +178,15 @@ class ReaderInflater {
     static constexpr std::size_t READ_CHUNK = 1u << 20;
     static constexpr std::size_t INIT_OUT = 1u << 20;
 
-    coro::CoroTask<bool> begin_at(int fd, off_t& offset,
+    coro::CoroTask<bool> begin_at(int fd, io::FileOffset& offset,
                                   std::uint64_t file_offset,
                                   std::size_t expected_out = 0) {
-        struct stat st;
-        if (::fstat(fd, &st) != 0) co_return false;
+        io::FileStat st;
+        if (io::platform_io::stat_fd(fd, &st) != 0) co_return false;
         file_size_ = static_cast<std::uint64_t>(st.st_size);
         comp_off_ = file_offset;
         next_read_ = file_offset;
-        offset = static_cast<off_t>(file_offset);
+        offset = static_cast<io::FileOffset>(file_offset);
         // Pre-size to the known span so the first member does not grow the
         // buffer by doubling.
         if (!cache_) {
@@ -212,7 +215,7 @@ class ReaderInflater {
     /// member_owned_. Bytes after the last newline are held back until more
     /// output or the end of the stream arrives, so a cut file yields only
     /// complete lines.
-    coro::CoroTask<bool> decode_next_stream(int fd, off_t& offset) {
+    coro::CoroTask<bool> decode_next_stream(int fd, io::FileOffset& offset) {
         member_len_ = 0;
         member_pos_ = 0;
         member_data_ = nullptr;
@@ -233,8 +236,9 @@ class ReaderInflater {
                 const std::size_t want =
                     static_cast<std::size_t>(std::min<std::uint64_t>(
                         READ_CHUNK, file_size_ - next_read_));
-                const ssize_t n = co_await dftracer::utils::io::pread(
-                    fd, comp_.data(), want, static_cast<off_t>(next_read_));
+                const io::IoResult n = co_await dftracer::utils::io::pread(
+                    fd, comp_.data(), want,
+                    static_cast<io::FileOffset>(next_read_));
                 if (n <= 0) co_return false;
                 zs_.next_in = comp_.data();
                 zs_.avail_in = static_cast<uInt>(n);
@@ -281,7 +285,7 @@ class ReaderInflater {
             comp_.clear();
             next_read_ = comp_off_;
         }
-        offset = static_cast<off_t>(comp_off_);
+        offset = static_cast<io::FileOffset>(comp_off_);
         member_data_ = member_owned_.data();
         member_len_ = filled;
         if (filled == 0 && ended && comp_off_ < file_size_) {
@@ -290,7 +294,7 @@ class ReaderInflater {
         co_return true;
     }
 
-    coro::CoroTask<bool> decode_next_member(int fd, off_t& offset) {
+    coro::CoroTask<bool> decode_next_member(int fd, io::FileOffset& offset) {
         if (stream_open_) co_return co_await decode_next_stream(fd, offset);
         if (cache_) co_return co_await decode_next_member_cached(fd, offset);
         co_return co_await decode_next_member_local(fd, offset);
@@ -298,7 +302,8 @@ class ReaderInflater {
 
     /// Fetch the member at comp_off_ through the cache (one decode shared
     /// across concurrent readers) and point the read window at it.
-    coro::CoroTask<bool> decode_next_member_cached(int fd, off_t& offset) {
+    coro::CoroTask<bool> decode_next_member_cached(int fd,
+                                                   io::FileOffset& offset) {
         member_len_ = 0;
         member_pos_ = 0;
         member_data_ = nullptr;
@@ -329,13 +334,14 @@ class ReaderInflater {
         member_data_ = member_shared_->data.data();
         member_len_ = member_shared_->data.size();
         comp_off_ += member_shared_->compressed_size;
-        offset = static_cast<off_t>(comp_off_);
+        offset = static_cast<io::FileOffset>(comp_off_);
         co_return true;
     }
 
     /// Decode the member at comp_off_ into the reused local buffer, or leave
     /// member_len_ == 0 at a clean end of file.
-    coro::CoroTask<bool> decode_next_member_local(int fd, off_t& offset) {
+    coro::CoroTask<bool> decode_next_member_local(int fd,
+                                                  io::FileOffset& offset) {
         member_len_ = 0;
         member_pos_ = 0;
         member_data_ = nullptr;
@@ -364,7 +370,7 @@ class ReaderInflater {
                 member_len_ = *keep;
                 comp_off_ = file_size_;
                 comp_.clear();
-                offset = static_cast<off_t>(comp_off_);
+                offset = static_cast<io::FileOffset>(comp_off_);
                 co_return true;
             }
             // Each retry decodes the member from its start, so the buffered
@@ -374,8 +380,9 @@ class ReaderInflater {
                                         file_size_ - next_read_));
             const std::size_t old = comp_.size();
             comp_.resize(old + want);
-            const ssize_t n = co_await dftracer::utils::io::pread(
-                fd, comp_.data() + old, want, static_cast<off_t>(next_read_));
+            const io::IoResult n = co_await dftracer::utils::io::pread(
+                fd, comp_.data() + old, want,
+                static_cast<io::FileOffset>(next_read_));
             if (n <= 0) co_return false;
             comp_.resize(old + static_cast<std::size_t>(n));
             next_read_ += static_cast<std::uint64_t>(n);
@@ -386,7 +393,7 @@ class ReaderInflater {
         comp_off_ += res.in_bytes;
         comp_.erase(comp_.begin(),
                     comp_.begin() + static_cast<std::ptrdiff_t>(res.in_bytes));
-        offset = static_cast<off_t>(comp_off_);
+        offset = static_cast<io::FileOffset>(comp_off_);
         co_return true;
     }
 
@@ -426,8 +433,9 @@ class ReaderInflater {
                     std::max(READ_CHUNK, comp.size()), file_size - next_read));
             const std::size_t old = comp.size();
             comp.resize(old + want);
-            const ssize_t n = co_await dftracer::utils::io::pread(
-                fd, comp.data() + old, want, static_cast<off_t>(next_read));
+            const io::IoResult n = co_await dftracer::utils::io::pread(
+                fd, comp.data() + old, want,
+                static_cast<io::FileOffset>(next_read));
             if (n <= 0) co_return std::nullopt;
             comp.resize(old + static_cast<std::size_t>(n));
             next_read += static_cast<std::uint64_t>(n);

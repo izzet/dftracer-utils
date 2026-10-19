@@ -10,7 +10,18 @@
 #include <dftracer/utils/plugins/reserved_names.h>
 #include <dftracer/utils/plugins/state_registry.h>
 #include <dftracer/utils/trace/views/view_plan.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <dftracer/utils/core/common/filesystem.h>
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <cstddef>
@@ -24,6 +35,7 @@
 #include <queue>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,6 +43,49 @@
 namespace dftracer::utils::plugins {
 
 namespace {
+void close_library(void* handle) {
+#ifdef _WIN32
+    FreeLibrary(static_cast<HMODULE>(handle));
+#else
+    dlclose(handle);
+#endif
+}
+
+void* open_library(const std::string& path) {
+#ifdef _WIN32
+    std::error_code ec;
+    auto absolute = fs::absolute(fs::u8path(path), ec);
+    if (ec) {
+        SetLastError(ERROR_PATH_NOT_FOUND);
+        return nullptr;
+    }
+    absolute.make_preferred();
+    return LoadLibraryExW(
+        absolute.c_str(), nullptr,
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+#else
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+void* library_symbol(void* handle, const char* name) {
+#ifdef _WIN32
+    return reinterpret_cast<void*>(
+        GetProcAddress(static_cast<HMODULE>(handle), name));
+#else
+    return dlsym(handle, name);
+#endif
+}
+
+std::string library_error() {
+#ifdef _WIN32
+    return std::system_category().message(static_cast<int>(GetLastError()));
+#else
+    const char* error = dlerror();
+    return error ? error : "unknown dlopen error";
+#endif
+}
+
 using View = trace::views::View;
 using ExportStats = trace::views::ExportStats;
 using Fold = trace::views::detail::Fold;
@@ -80,7 +135,7 @@ struct Plugins::Impl {
                 index::extensions::unregister_plugin_extension(name);
             if (p.owned && p.plugin && p.plugin->destroy)
                 p.plugin->destroy(p.plugin->self);
-            if (p.handle) dlclose(p.handle);
+            if (p.handle) close_library(p.handle);
         }
     }
 
@@ -257,6 +312,7 @@ Result<ConfigTree> parse_config_json(const std::string& path,
 // once (RTLD_NOLOAD | RTLD_GLOBAL re-opens an already loaded library without
 // loading it again); no plugin links the host, as section 17 requires.
 void expose_dataframe_abi() {
+#ifndef _WIN32
     static bool done = false;
     if (done) return;
     done = true;
@@ -267,23 +323,23 @@ void expose_dataframe_abi() {
         return;
     // Promotes the loaded library to RTLD_GLOBAL; the handle is never closed.
     dlopen(info.dli_fname, RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
+#endif
 }
 
 Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
                                           const dftu_value* config) {
     expose_dataframe_abi();
-    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    void* handle = open_library(path);
     if (!handle) {
-        const char* why = dlerror();
+        const auto why = library_error();
         return make_error(ErrorCode::IO,
-                          "plugin '" + path + "' failed to load: " +
-                              (why ? why : "unknown dlopen error"));
+                          "plugin '" + path + "' failed to load: " + why);
     }
 
     auto factory = reinterpret_cast<dftu_plugin_factory>(
-        dlsym(handle, DFTRACER_PLUGIN_FACTORY_SYMBOL));
+        library_symbol(handle, DFTRACER_PLUGIN_FACTORY_SYMBOL));
     if (!factory) {
-        dlclose(handle);
+        close_library(handle);
         return make_error(ErrorCode::NOT_FOUND,
                           "plugin '" + path + "' exports no '" +
                               DFTRACER_PLUGIN_FACTORY_SYMBOL + "' symbol");
@@ -314,7 +370,7 @@ Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
     if (!build_host.denied().empty()) {
         if (plugin && plugin->destroy) plugin->destroy(plugin->self);
         unregister_all();
-        dlclose(handle);
+        close_library(handle);
         return make_error(
             ErrorCode::INVALID_ARGUMENT,
             "plugin '" + path + "' factory asked for '" + build_host.denied() +
@@ -325,7 +381,7 @@ Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
 
     if (!plugin) {
         unregister_all();
-        dlclose(handle);
+        close_library(handle);
         return make_error(ErrorCode::INVALID_ARGUMENT,
                           "plugin '" + path + "' factory returned null");
     }
@@ -334,7 +390,7 @@ Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
         const std::uint32_t got = plugin->abi_version;
         if (plugin->destroy) plugin->destroy(plugin->self);
         unregister_all();
-        dlclose(handle);
+        close_library(handle);
         return make_error(
             ErrorCode::INVALID_ARGUMENT,
             "plugin '" + path + "' ABI version " + std::to_string(got) +
@@ -345,7 +401,7 @@ Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
     if (std::string bad = config_violation(plugin, config); !bad.empty()) {
         if (plugin->destroy) plugin->destroy(plugin->self);
         unregister_all();
-        dlclose(handle);
+        close_library(handle);
         return make_error(ErrorCode::INVALID_ARGUMENT,
                           "plugin '" + path + "' config: " + bad);
     }
@@ -367,7 +423,7 @@ Result<Plugins::Impl::Loaded> load_plugin(const std::string& path,
         if (!parsed) {
             if (plugin->destroy) plugin->destroy(plugin->self);
             unregister_all();
-            dlclose(handle);
+            close_library(handle);
             return make_error(
                 ErrorCode::INVALID_ARGUMENT,
                 "plugin '" + path + "' plan_duql '" + plan +

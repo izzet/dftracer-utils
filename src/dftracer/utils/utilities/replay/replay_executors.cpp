@@ -1,8 +1,10 @@
+#include <dftracer/utils/core/common/filesystem.h>
 #include <dftracer/utils/core/common/logging.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/replay/replay.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -18,17 +20,11 @@ namespace {
  * Create directory path if it doesn't exist
  */
 bool ensure_directory_exists(const std::string& path) {
-    std::string dir_path = path.substr(0, path.find_last_of('/'));
-    if (dir_path.empty() || dir_path == path) return true;
-
-    struct stat st;
-    if (stat(dir_path.c_str(), &st) == 0) {
-        return S_ISDIR(st.st_mode);
-    }
-
-    // Try to create directory recursively
-    return ensure_directory_exists(dir_path) &&
-           (mkdir(dir_path.c_str(), 0755) == 0);
+    const auto parent = fs::u8path(path).parent_path();
+    if (parent.empty()) return true;
+    std::error_code error;
+    fs::create_directories(parent, error);
+    return !error && fs::is_directory(parent, error);
 }
 
 }  // anonymous namespace
@@ -141,7 +137,7 @@ bool PosixExecutor::execute_read(const Trace& trace,
         std::size_t n = std::min(static_cast<std::size_t>(trace.size),
                                  config.max_file_size);
         ensure_io_buffer(n);
-        [[maybe_unused]] ssize_t bytes_read =
+        [[maybe_unused]] io::IoResult bytes_read =
             read(it->second, io_buffer_.data(), n);
         DFTRACER_UTILS_LOG_DEBUG("Read %zd bytes", bytes_read);
     }
@@ -159,7 +155,7 @@ bool PosixExecutor::execute_write(const Trace& trace,
         std::size_t write_size = std::min(static_cast<std::size_t>(trace.size),
                                           config.max_file_size);
         ensure_io_buffer(write_size);
-        [[maybe_unused]] ssize_t bytes_written =
+        [[maybe_unused]] io::IoResult bytes_written =
             write(it->second, io_buffer_.data(), write_size);
         DFTRACER_UTILS_LOG_DEBUG("Wrote %zd bytes", bytes_written);
     }
@@ -174,7 +170,7 @@ bool PosixExecutor::execute_seek(const Trace& trace,
 
     auto it = open_files_.find(trace.fhash);
     if (it != open_files_.end() && trace.offset >= 0) {
-        [[maybe_unused]] off_t result =
+        [[maybe_unused]] io::FileOffset result =
             lseek(it->second, trace.offset, SEEK_SET);
         DFTRACER_UTILS_LOG_DEBUG("Seek to offset %lld, result: %lld",
                                  static_cast<long long>(trace.offset),

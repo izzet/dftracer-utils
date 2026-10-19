@@ -1,22 +1,16 @@
 #include <dftracer/utils/core/common/config.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #ifdef DFTRACER_UTILS_ENABLE_ARROW_IPC
 
 #include <dftracer/utils/utilities/common/arrow/ipc_reader.h>
+#include <fcntl.h>
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow_ipc.h>
 
 #include <cstring>
+#include <limits>
 #include <new>
-
-// Platform-specific includes for mmap
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
 
 namespace dftracer::utils::utilities::common::arrow {
 
@@ -82,21 +76,8 @@ void IpcReader::close() {
 
     shared_schema_.reset();
 
-#ifdef _WIN32
-    if (mapped_data_) {
-        UnmapViewOfFile(mapped_data_);
-    }
-    if (fd_ != -1) {
-        CloseHandle(reinterpret_cast<HANDLE>(fd_));
-    }
-#else
-    if (mapped_data_ && mapped_data_ != MAP_FAILED) {
-        munmap(mapped_data_, mapped_size_);
-    }
-    if (fd_ != -1) {
-        ::close(fd_);
-    }
-#endif
+    if (mapped_data_) io::platform_io::unmap(mapped_data_, mapped_size_);
+    if (fd_ >= 0) io::platform_io::close(fd_);
 
     reset_state();
 }
@@ -108,65 +89,21 @@ void IpcReader::close() {
 int IpcReader::open(const std::string& path) {
     if (is_open()) return -1;
 
-#ifdef _WIN32
-    // Windows memory mapping
-    HANDLE file =
-        CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return -1;
-
-    LARGE_INTEGER size;
-    if (!GetFileSizeEx(file, &size)) {
-        CloseHandle(file);
-        return -1;
-    }
-    mapped_size_ = static_cast<std::size_t>(size.QuadPart);
-
-    HANDLE mapping =
-        CreateFileMappingA(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    if (!mapping) {
-        CloseHandle(file);
-        return -1;
-    }
-
-    mapped_data_ = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-    CloseHandle(mapping);
-    if (!mapped_data_) {
-        CloseHandle(file);
-        return -1;
-    }
-    fd_ = reinterpret_cast<int>(file);
-#else
-    // POSIX memory mapping
-    fd_ = ::open(path.c_str(), O_RDONLY);
+    fd_ = io::platform_io::open(path.c_str(), O_RDONLY);
     if (fd_ < 0) return -1;
-
-    struct stat st;
-    if (fstat(fd_, &st) < 0) {
-        ::close(fd_);
-        fd_ = -1;
+    io::FileStat info{};
+    if (io::platform_io::stat_fd(fd_, &info) != 0 || info.st_size < 18 ||
+        static_cast<std::uint64_t>(info.st_size) >
+            std::numeric_limits<std::size_t>::max()) {
+        close();
         return -1;
     }
-    mapped_size_ = static_cast<std::size_t>(st.st_size);
-
-    // Minimum Arrow IPC file: magic(8) + footer_size(4) + magic(6) = 18 bytes
-    if (mapped_size_ < 18) {
-        ::close(fd_);
-        fd_ = -1;
+    mapped_size_ = static_cast<std::size_t>(info.st_size);
+    mapped_data_ = io::platform_io::map_readonly(fd_, 0, mapped_size_);
+    if (!mapped_data_) {
+        close();
         return -1;
     }
-
-    mapped_data_ = mmap(nullptr, mapped_size_, PROT_READ, MAP_PRIVATE, fd_, 0);
-    if (mapped_data_ == MAP_FAILED) {
-        ::close(fd_);
-        fd_ = -1;
-        mapped_data_ = nullptr;
-        return -1;
-    }
-
-    // Advise kernel we'll read sequentially
-    madvise(mapped_data_, mapped_size_, MADV_SEQUENTIAL);
-#endif
 
     int rc = read_footer();
     if (rc != NANOARROW_OK) {

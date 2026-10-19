@@ -8,12 +8,13 @@
 #include <dftracer/utils/core/coro/async_semaphore.h>
 #include <dftracer/utils/core/coro/channel.h>
 #include <dftracer/utils/core/coro/task.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
 #include <dftracer/utils/trace/genesis/genesis.h>
 #include <dftracer/utils/utilities/fileio/gzip_line_writer.h>
 #include <fcntl.h>
 #include <sys/resource.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -582,21 +583,21 @@ constexpr std::size_t COPY_BYTES = 8 * 1024 * 1024;
 
 // Copies all of `from` into `to` at `offset`.
 bool copy_into(const std::string& from, int to, std::uint64_t offset) {
-    const int in = ::open(from.c_str(), O_RDONLY);
+    const int in = io::platform_io::open(from.c_str(), O_RDONLY);
     if (in < 0) return false;
     auto buf = std::make_unique_for_overwrite<char[]>(COPY_BYTES);
     bool ok = true;
     for (;;) {
-        const ssize_t n = ::read(in, buf.get(), COPY_BYTES);
+        const io::IoResult n = io::platform_io::read(in, buf.get(), COPY_BYTES);
         if (n < 0) {
             ok = false;
             break;
         }
         if (n == 0) break;
-        for (ssize_t done = 0; done < n;) {
-            const ssize_t w = ::pwrite(to, buf.get() + done,
-                                       static_cast<std::size_t>(n - done),
-                                       static_cast<off_t>(offset));
+        for (io::IoResult done = 0; done < n;) {
+            const io::IoResult w = io::platform_io::pwrite(
+                to, buf.get() + done, static_cast<std::size_t>(n - done),
+                static_cast<io::FileOffset>(offset));
             if (w <= 0) {
                 ok = false;
                 break;
@@ -606,7 +607,7 @@ bool copy_into(const std::string& from, int to, std::uint64_t offset) {
         }
         if (!ok) break;
     }
-    ::close(in);
+    io::platform_io::close(in);
     return ok;
 }
 
@@ -738,9 +739,10 @@ coro::CoroTask<int> run_gen_dist(CoroScope& ctx, const GenDistArgParse* cli,
     if (!io_error && closed) {
         std::error_code ec;
         const std::uint64_t end = fs::file_size(output, ec);
-        const int fd = ec ? -1 : ::open(output.c_str(), O_WRONLY);
+        const int fd =
+            ec ? -1 : io::platform_io::open(output.c_str(), O_WRONLY);
         appended = fd >= 0 && copy_into(head_path, fd, end);
-        if (fd >= 0 && ::close(fd) != 0) appended = false;
+        if (fd >= 0 && io::platform_io::close(fd) != 0) appended = false;
     }
     {
         std::error_code ec;
@@ -809,16 +811,17 @@ int join_parts(const std::string& output, const std::string& part, int rank,
     }
     bool made = true;
     if (rank == 0) {
-        const int fd =
-            ::open(output.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        made = fd >= 0 && ::ftruncate(fd, static_cast<off_t>(total)) == 0;
-        if (fd >= 0) ::close(fd);
+        const int fd = io::platform_io::open(
+            output.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        made = fd >= 0 && io::platform_io::truncate(
+                              fd, static_cast<io::FileOffset>(total)) == 0;
+        if (fd >= 0) io::platform_io::close(fd);
     }
     bool copied = all_ranks(made);
     if (copied) {
-        const int fd = ::open(output.c_str(), O_WRONLY);
+        const int fd = io::platform_io::open(output.c_str(), O_WRONLY);
         copied = fd >= 0 && copy_into(part, fd, offset);
-        if (fd >= 0 && ::close(fd) != 0) copied = false;
+        if (fd >= 0 && io::platform_io::close(fd) != 0) copied = false;
     }
     fs::remove(part, ec);
     copied = all_ranks(copied);

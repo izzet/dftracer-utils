@@ -1,7 +1,11 @@
 #ifndef DFTRACER_UTILS_CORE_IO_FD_HANDLE_H
 #define DFTRACER_UTILS_CORE_IO_FD_HANDLE_H
 
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace dftracer::utils::io {
 
@@ -31,7 +35,13 @@ class FdHandle {
 
     /// Close the current fd (if any) and adopt @p fd (default: none).
     void reset(int fd = -1) noexcept {
-        if (fd_ >= 0) ::close(fd_);
+        if (fd_ >= 0) {
+#ifdef _WIN32
+            ::_close(fd_);
+#else
+            ::close(fd_);
+#endif
+        }
         fd_ = fd;
     }
 

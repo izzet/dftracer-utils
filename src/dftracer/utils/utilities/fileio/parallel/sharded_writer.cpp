@@ -1,8 +1,8 @@
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/parallel/parallel_writer.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include <vector>
 
@@ -23,7 +23,7 @@ class ShardedWriter final : public ParallelWriter {
         per_worker_last_.assign(num_workers, std::nullopt);
         for (std::size_t i = 0; i < num_workers; ++i) {
             shard_paths_[i] = base_path_ + ".shard_" + std::to_string(i) + ext;
-            ssize_t fd = co_await ::dftracer::utils::io::open(
+            io::IoResult fd = co_await io::open(
                 shard_paths_[i].c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd < 0) {
                 DFTRACER_UTILS_LOG_ERROR("Failed to open shard: %s",
@@ -64,7 +64,7 @@ class ShardedWriter final : public ParallelWriter {
         int status = 0;
         for (auto& fd : shard_fds_) {
             if (fd < 0) continue;
-            auto rc = co_await ::dftracer::utils::io::close(fd);
+            auto rc = co_await io::close(fd);
             if (rc < 0) status = -1;
             fd = -1;
         }
@@ -97,8 +97,8 @@ class ShardedWriter final : public ParallelWriter {
         const auto* bytes = reinterpret_cast<const char*>(data.data());
         std::size_t written = 0;
         while (written < data.size()) {
-            auto n = co_await ::dftracer::utils::io::write(
-                fd, bytes + written, data.size() - written);
+            auto n =
+                co_await io::write(fd, bytes + written, data.size() - written);
             if (n <= 0) {
                 DFTRACER_UTILS_LOG_ERROR("write failed on shard fd=%d", fd);
                 co_return -1;

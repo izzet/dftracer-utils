@@ -1,6 +1,7 @@
 #include <dftracer/utils/core/common/config.h>
 #include <dftracer/utils/core/common/filesystem.h>
 #include <dftracer/utils/core/common/filesystem_info.h>
+#include <dftracer/utils/core/io/types.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
@@ -103,13 +104,15 @@ std::string probe_path(const std::string& path) noexcept {
     return std::string(".");
 }
 
+#ifndef _WIN32
 bool same_device(const std::string& a, const std::string& b) noexcept {
-    struct stat sa{};
-    struct stat sb{};
+    io::FileStat sa{};
+    io::FileStat sb{};
     if (::stat(a.c_str(), &sa) != 0 || ::stat(b.c_str(), &sb) != 0)
         return false;
     return sa.st_dev == sb.st_dev;
 }
+#endif
 
 #ifdef _WIN32
 std::wstring windows_mountpoint(const std::string& path) {

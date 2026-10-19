@@ -3,7 +3,6 @@
 #include <dftracer/utils/core/common/spill_dir.h>
 #include <dftracer/utils/plugins/fold_adapter.h>
 #include <dftracer/utils/plugins/fold_adapter/state.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cstddef>

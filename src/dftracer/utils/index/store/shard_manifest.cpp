@@ -1,8 +1,8 @@
 #include <dftracer/utils/core/common/error.h>
 #include <dftracer/utils/core/common/filesystem.h>
+#include <dftracer/utils/core/common/platform_compat.h>
 #include <dftracer/utils/index/store/shard_manifest.h>
 #include <simdjson.h>
-#include <unistd.h>
 
 #include <cstdio>
 #include <fstream>
@@ -117,7 +117,7 @@ void write_shard_manifest(const std::string& dir,
     const fs::path final_path = fs::path(dir) / SHARD_MANIFEST_FILENAME;
     const fs::path tmp_path =
         fs::path(dir) / (std::string(SHARD_MANIFEST_FILENAME) + ".tmp." +
-                         std::to_string(::getpid()));
+                         std::to_string(process_id()));
 
     const std::string body = to_json(manifest);
     {

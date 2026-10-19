@@ -10,6 +10,8 @@ function(target_set_warnings TARGET_NAME)
                         "${multiValueArgs}" ${ARGN})
 
   if(MSVC)
+    # Logging macros use the standard C++20 variadic preprocessor.
+    target_compile_options(${TARGET_NAME} PUBLIC /Zc:preprocessor)
     # MSVC warnings
     target_compile_options(
       ${TARGET_NAME}

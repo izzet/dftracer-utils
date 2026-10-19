@@ -7,10 +7,9 @@
  * dftracer/utils/plugins/abi.h rather than this file directly.
  */
 
+#include <dftracer/utils/core/io/types_abi.h>
 #include <dftracer/utils/plugins/abi/core.h>
 #include <stdint.h>
-#include <sys/socket.h> /* struct sockaddr, socklen_t for accept */
-#include <sys/uio.h>    /* struct iovec for the vectored ops */
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,13 +46,13 @@ typedef struct dftu_io {
        host predating one of these leaves its slot NULL. The vectored ops take a
        borrowed iovec array valid for the await; out_n receives the byte count
        (negative errno on failure). */
-    dftu_task* (*readv)(void* h, int fd, const struct iovec* iov, int iovcnt,
+    dftu_task* (*readv)(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                         int64_t* out_n);
-    dftu_task* (*writev)(void* h, int fd, const struct iovec* iov, int iovcnt,
+    dftu_task* (*writev)(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                          int64_t* out_n);
-    dftu_task* (*preadv)(void* h, int fd, const struct iovec* iov, int iovcnt,
+    dftu_task* (*preadv)(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                          uint64_t off, int64_t* out_n);
-    dftu_task* (*pwritev)(void* h, int fd, const struct iovec* iov, int iovcnt,
+    dftu_task* (*pwritev)(void* h, int fd, const dftu_iovec* iov, int iovcnt,
                           uint64_t off, int64_t* out_n);
     /** Reposition the file offset; whence is SEEK_SET/CUR/END. out_off receives
        the resulting absolute offset, or a negative errno. */
@@ -65,13 +64,13 @@ typedef struct dftu_io {
                            uint64_t count, int64_t* out_n);
     /** Accept a connection on a listening socket; addr/addrlen may be NULL.
        out_fd receives the client fd, or a negative errno. */
-    dftu_task* (*accept)(void* h, int fd, struct sockaddr* addr,
-                         socklen_t* addrlen, int* out_fd);
+    dftu_task* (*accept)(void* h, dftu_socket_t fd, struct sockaddr* addr,
+                         dftu_socklen_t* addrlen, dftu_socket_result_t* out_fd);
     /** Socket receive/send; flags are the recv(2)/send(2) flags. out_n receives
        the byte count, or a negative errno. */
-    dftu_task* (*recv)(void* h, int fd, void* buf, uint64_t len, int flags,
-                       int64_t* out_n);
-    dftu_task* (*send)(void* h, int fd, const void* buf, uint64_t len,
+    dftu_task* (*recv)(void* h, dftu_socket_t fd, void* buf, uint64_t len,
+                       int flags, int64_t* out_n);
+    dftu_task* (*send)(void* h, dftu_socket_t fd, const void* buf, uint64_t len,
                        int flags, int64_t* out_n);
 } dftu_io;
 

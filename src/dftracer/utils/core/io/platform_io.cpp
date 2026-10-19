@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #else
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -370,6 +371,31 @@ int stat_fd(int fd, FileStat* buf) noexcept {
 #endif
 }
 
+int stat_path(const char* path, FileStat* buf) noexcept {
+#ifdef _WIN32
+    if (!path || !buf) {
+        errno = EFAULT;
+        return -1;
+    }
+    try {
+        const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                             path, -1, nullptr, 0);
+        if (size == 0) return win_error(GetLastError());
+        std::wstring wide(static_cast<std::size_t>(size), L'\0');
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
+                                 wide.data(), size))
+            return win_error(GetLastError());
+        InvalidParameterScope parameters;
+        return ::_wstat64(wide.c_str(), buf);
+    } catch (const std::bad_alloc&) {
+        errno = ENOMEM;
+        return -1;
+    }
+#else
+    return ::stat(path, buf);
+#endif
+}
+
 int iov_max_entries() noexcept {
 #ifdef _WIN32
     return 1024;
@@ -379,6 +405,73 @@ int iov_max_entries() noexcept {
         return n > 0 && n <= INT_MAX ? static_cast<int>(n) : 1024;
     }();
     return value;
+#endif
+}
+
+int unlink(const char* path) noexcept {
+#ifdef _WIN32
+    if (!path) {
+        errno = EFAULT;
+        return -1;
+    }
+    try {
+        const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                             path, -1, nullptr, 0);
+        if (size == 0) return win_error(GetLastError());
+        std::wstring wide(static_cast<std::size_t>(size), L'\0');
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
+                                 wide.data(), size))
+            return win_error(GetLastError());
+        InvalidParameterScope parameters;
+        return ::_wunlink(wide.c_str());
+    } catch (const std::bad_alloc&) {
+        errno = ENOMEM;
+        return -1;
+    }
+#else
+    return ::unlink(path);
+#endif
+}
+
+int try_lock_exclusive(int fd) noexcept {
+#ifdef _WIN32
+    InvalidParameterScope parameters;
+    const auto raw = _get_osfhandle(fd);
+    if (raw == -1 || raw == -2) {
+        errno = EBADF;
+        return -1;
+    }
+    OVERLAPPED offset{};
+    if (LockFileEx(reinterpret_cast<HANDLE>(raw),
+                   LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0,
+                   MAXDWORD, MAXDWORD, &offset))
+        return 0;
+    const auto error = GetLastError();
+    if (error == ERROR_LOCK_VIOLATION) {
+        errno = EAGAIN;
+        return -1;
+    }
+    return win_error(error);
+#else
+    return ::flock(fd, LOCK_EX | LOCK_NB);
+#endif
+}
+
+int unlock(int fd) noexcept {
+#ifdef _WIN32
+    InvalidParameterScope parameters;
+    const auto raw = _get_osfhandle(fd);
+    if (raw == -1 || raw == -2) {
+        errno = EBADF;
+        return -1;
+    }
+    OVERLAPPED offset{};
+    return UnlockFileEx(reinterpret_cast<HANDLE>(raw), 0, MAXDWORD, MAXDWORD,
+                        &offset)
+               ? 0
+               : win_error(GetLastError());
+#else
+    return ::flock(fd, LOCK_UN);
 #endif
 }
 

@@ -8,8 +8,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
-// Load the CRT declarations before defining aliases so they cannot rewrite
-// function declarations or turn struct stat into a second _stat64.
+// Load CRT declarations before defining the stdio aliases.
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -19,8 +18,10 @@
 #define popen _popen
 #define pclose _pclose
 #define fileno _fileno
-#define stat _stat64
-#define fstat _fstat64
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC _O_NOINHERIT
+#endif
 
 // For large file support on Windows
 #ifndef _FILE_OFFSET_BITS

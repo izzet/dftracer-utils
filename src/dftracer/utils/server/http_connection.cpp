@@ -1,10 +1,11 @@
 #include <dftracer/utils/core/common/logging.h>
 #include <dftracer/utils/core/io/ops.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/server/http_connection.h>
 #include <dftracer/utils/server/http_request.h>
 #include <dftracer/utils/server/http_response.h>
 #include <dftracer/utils/server/router.h>
-#include <sys/uio.h>
+#include <dftracer/utils/server/socket.h>
 
 #include <cstring>
 #include <vector>
@@ -15,7 +16,21 @@
 
 namespace dftracer::utils::server {
 
-coro::CoroTask<void> handle_connection(int client_fd,
+namespace {
+coro::CoroTask<io::IoResult> send_all(io::SocketHandle fd, const char* data,
+                                      std::size_t size) {
+    std::size_t sent = 0;
+    while (sent < size) {
+        const auto result = co_await io::send(fd, data + sent, size - sent, 0);
+        if (result == -EINTR) continue;
+        if (result <= 0) co_return result < 0 ? result : -EPIPE;
+        sent += static_cast<std::size_t>(result);
+    }
+    co_return static_cast<io::IoResult>(sent);
+}
+}  // namespace
+
+coro::CoroTask<void> handle_connection(io::SocketHandle client_fd,
                                        struct sockaddr_in /*addr*/,
                                        Router& router) {
     // 8 KiB receive buffer. For HTTP/1.1 GET requests this is plenty.
@@ -26,8 +41,8 @@ coro::CoroTask<void> handle_connection(int client_fd,
 
     while (true) {
         // Read data from socket.
-        ssize_t n = co_await io::recv(client_fd, buf + buf_used,
-                                      BUF_SIZE - buf_used, 0);
+        io::IoResult n = co_await io::recv(client_fd, buf + buf_used,
+                                           BUF_SIZE - buf_used, 0);
         if (n <= 0) break;  // Connection closed or error
         buf_used += static_cast<std::size_t>(n);
 
@@ -40,7 +55,7 @@ coro::CoroTask<void> handle_connection(int client_fd,
                 // Buffer full but still no complete request.
                 auto resp = HttpResponse::bad_request("Request too large");
                 auto out = resp.serialize();
-                co_await io::send(client_fd, out.data(), out.size(), 0);
+                co_await send_all(client_fd, out.data(), out.size());
                 break;
             }
             continue;
@@ -48,7 +63,7 @@ coro::CoroTask<void> handle_connection(int client_fd,
         if (parsed < 0) {
             auto resp = HttpResponse::bad_request("Malformed HTTP request");
             auto out = resp.serialize();
-            co_await io::send(client_fd, out.data(), out.size(), 0);
+            co_await send_all(client_fd, out.data(), out.size());
             break;
         }
 
@@ -82,14 +97,14 @@ coro::CoroTask<void> handle_connection(int client_fd,
         if (resp.is_streaming()) {
             auto hdrs = resp.serialize_headers();
             auto hdr_rc =
-                co_await io::send(client_fd, hdrs.data(), hdrs.size(), 0);
+                co_await send_all(client_fd, hdrs.data(), hdrs.size());
             if (hdr_rc < 0) goto stream_done;
 
             {
                 static constexpr char newline_ch = '\n';
                 static constexpr char crlf[] = "\r\n";
                 char hex[24];
-                std::vector<struct iovec> iovs;
+                std::vector<io::IoVec> iovs;
 
                 while (auto chunk = co_await resp.stream->next()) {
                     if (chunk->views.empty()) continue;
@@ -112,8 +127,19 @@ coro::CoroTask<void> handle_connection(int client_fd,
                     }
                     iovs.push_back({const_cast<char*>(crlf), 2});
 
+#ifdef _WIN32
+                    // Winsock handles cannot be passed to CRT writev.
+                    io::IoResult rc = 0;
+                    for (const auto& iov : iovs) {
+                        rc = co_await send_all(
+                            client_fd, static_cast<const char*>(iov.iov_base),
+                            iov.iov_len);
+                        if (rc < 0) break;
+                    }
+#else
                     auto rc = co_await io::writev_all(
                         client_fd, iovs.data(), static_cast<int>(iovs.size()));
+#endif
                     if (rc < 0) {
                         DFTRACER_UTILS_LOG_ERROR(
                             "Streaming write failed; closing connection");
@@ -122,11 +148,11 @@ coro::CoroTask<void> handle_connection(int client_fd,
                     }
                 }
             }
-            co_await io::send(client_fd, "0\r\n\r\n", 5, 0);
+            co_await send_all(client_fd, "0\r\n\r\n", 5);
         stream_done:;
         } else {
             auto out = resp.serialize();
-            co_await io::send(client_fd, out.data(), out.size(), 0);
+            co_await send_all(client_fd, out.data(), out.size());
         }
 
         // Consume parsed bytes; shift any remaining data.
@@ -145,7 +171,7 @@ coro::CoroTask<void> handle_connection(int client_fd,
     }
 
     // Note: the caller (tcp_listener) is responsible for closing
-    // client_fd via io::close() after this coroutine returns.
+    // client_fd with the native socket close after this coroutine returns.
 
 #ifdef __linux__
     // Return freed heap pages to the OS.  Each request may decompress

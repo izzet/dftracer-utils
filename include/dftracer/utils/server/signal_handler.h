@@ -1,6 +1,8 @@
 #ifndef DFTRACER_UTILS_SERVER_SIGNAL_HANDLER_H
 #define DFTRACER_UTILS_SERVER_SIGNAL_HANDLER_H
 
+#include <dftracer/utils/core/io/types.h>
+
 #include <atomic>
 
 namespace dftracer::utils::server {
@@ -11,7 +13,7 @@ extern std::atomic<bool> g_shutdown_requested;
 
 /// Global listen fd for the signal handler to close on shutdown.
 /// Set this before entering the accept loop.
-extern std::atomic<int> g_listen_fd;
+extern std::atomic<io::SocketHandle> g_listen_fd;
 
 /// Install SIGINT/SIGTERM handlers that set g_shutdown_requested
 /// and shutdown the listen socket to unblock accept().

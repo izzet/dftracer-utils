@@ -90,6 +90,51 @@ TEST_CASE("ready I/O results retain 64-bit values and negative errors") {
     CHECK(aio::IoAwaitable::ready(-EBADF).await_resume() == -EBADF);
 }
 
+TEST_CASE("path metadata and removal support UTF-8 filenames") {
+    TemporaryDirectory dir;
+    const auto path =
+        utf8_path(dir.path / fs::path(u8"metadata_\u0131_\u4e2d.bin"));
+    {
+        TestFd fd(files::open(path.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600));
+        REQUIRE(fd.value >= 0);
+        REQUIRE(files::write(fd.value, "abc", 3) == 3);
+        aio::FileStat info{};
+        REQUIRE(files::stat_path(path.c_str(), &info) == 0);
+        CHECK(info.st_size == 3);
+    }
+    REQUIRE(files::unlink(path.c_str()) == 0);
+    aio::FileStat info{};
+    CHECK(files::stat_path(path.c_str(), &info) == -1);
+    CHECK(errno == ENOENT);
+    CHECK(files::unlink(path.c_str()) == -1);
+    CHECK(errno == ENOENT);
+}
+
+TEST_CASE(
+    "exclusive file locks compete across independently opened descriptors") {
+    TemporaryDirectory dir;
+    const auto path = utf8_path(dir.path / "lock");
+    TestFd first(files::open(path.c_str(), O_CREAT | O_RDWR, 0600));
+    TestFd second(files::open(path.c_str(), O_RDWR));
+    REQUIRE(first.value >= 0);
+    REQUIRE(second.value >= 0);
+    REQUIRE(files::try_lock_exclusive(first.value) == 0);
+    CHECK(files::try_lock_exclusive(second.value) == -1);
+    CHECK((errno == EAGAIN || errno == EWOULDBLOCK));
+    REQUIRE(files::unlock(first.value) == 0);
+    REQUIRE(files::try_lock_exclusive(second.value) == 0);
+    CHECK(files::unlock(second.value) == 0);
+    REQUIRE(files::try_lock_exclusive(first.value) == 0);
+    REQUIRE(files::close(first.value) == 0);
+    first.value = -1;
+    CHECK(files::try_lock_exclusive(second.value) == 0);
+    CHECK(files::unlock(second.value) == 0);
+    CHECK(files::try_lock_exclusive(-1) == -1);
+    CHECK(errno == EBADF);
+    CHECK(files::unlock(-1) == -1);
+    CHECK(errno == EBADF);
+}
+
 TEST_CASE("binary sequential and positional I/O preserve bytes and position") {
     TemporaryDirectory dir;
     const auto path = utf8_path(dir.path / "binary.bin");

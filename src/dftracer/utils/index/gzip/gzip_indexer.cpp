@@ -5,6 +5,8 @@
 #include <dftracer/utils/core/coro/async_semaphore.h>
 #include <dftracer/utils/core/coro/channel.h>
 #include <dftracer/utils/core/coro/task.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/pipeline/executor.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
 #include <dftracer/utils/index/build/index_visitor.h>
@@ -19,7 +21,6 @@
 #include <dftracer/utils/utilities/fileio/compress/libdeflate_gzip.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <zlib.h>
 
 #include <algorithm>
@@ -121,8 +122,9 @@ decode_member_at(int fd, std::uint64_t c_off, std::uint64_t file_size,
                 std::max(READ_CHUNK, comp.size()), file_size - next_read));
         const std::size_t old = comp.size();
         comp.resize(old + want);
-        const ssize_t n = co_await dftracer::utils::io::pread(
-            fd, comp.data() + old, want, static_cast<off_t>(next_read));
+        const io::IoResult n = co_await dftracer::utils::io::pread(
+            fd, comp.data() + old, want,
+            static_cast<io::FileOffset>(next_read));
         if (n <= 0) co_return std::nullopt;
         comp.resize(old + static_cast<std::size_t>(n));
         next_read += static_cast<std::uint64_t>(n);
@@ -173,9 +175,9 @@ static dftracer::utils::coro::CoroTask<std::uint64_t> next_member_start(
     if (to == end || to - end > MAX_ZERO_GAP) co_return end;
     unsigned char gap[MAX_ZERO_GAP];
     const std::size_t len = static_cast<std::size_t>(to - end);
-    const ssize_t n = co_await dftracer::utils::io::pread(
-        fd, gap, len, static_cast<off_t>(end));
-    if (n != static_cast<ssize_t>(len)) co_return end;
+    const io::IoResult n = co_await dftracer::utils::io::pread(
+        fd, gap, len, static_cast<io::FileOffset>(end));
+    if (n != static_cast<io::IoResult>(len)) co_return end;
     for (std::size_t i = 0; i < len; ++i)
         if (gap[i] != 0) co_return end;
     co_return to;
@@ -282,8 +284,8 @@ static dftracer::utils::coro::CoroTask<bool> stream_member(
         if (zs.avail_in == 0 && next_read < file_size) {
             const std::size_t want = static_cast<std::size_t>(
                 std::min<std::uint64_t>(READ_CHUNK, file_size - next_read));
-            const ssize_t n = co_await dftracer::utils::io::pread(
-                fd, in.data(), want, static_cast<off_t>(next_read));
+            const io::IoResult n = co_await dftracer::utils::io::pread(
+                fd, in.data(), want, static_cast<io::FileOffset>(next_read));
             if (n <= 0) co_return false;
             zs.next_in = in.data();
             zs.avail_in = static_cast<uInt>(n);
@@ -841,8 +843,8 @@ static dftracer::utils::coro::CoroTask<bool> process_chunks(
     std::vector<std::pair<std::uint64_t, std::string>>& restart_windows,
     const CheckpointIndexer::VisitorList& visitors, bool& truncated,
     std::uint64_t& recovered_bytes) {
-    struct stat st;
-    if (::fstat(fd, &st) != 0) co_return false;
+    io::FileStat st;
+    if (io::platform_io::stat_fd(fd, &st) != 0) co_return false;
     const std::uint64_t file_size = static_cast<std::uint64_t>(st.st_size);
 
     // Pre-scanned slice path: caller supplied the member map and a range.
@@ -893,7 +895,7 @@ build_gzip_index_artifacts(const std::string& gz_path, std::uint64_t ckpt_size,
                            const CheckpointIndexer::VisitorList& visitors,
                            CoroScope* scope, const GzipMemberSlice* slice,
                            std::size_t ways) {
-    int fd = ::open(gz_path.c_str(), O_RDONLY);
+    int fd = io::platform_io::open(gz_path.c_str(), O_RDONLY);
     if (fd < 0) {
         co_return std::nullopt;
     }
@@ -919,7 +921,7 @@ build_gzip_index_artifacts(const std::string& gz_path, std::uint64_t ckpt_size,
     const bool success = co_await process_chunks(
         scope, fd, slice, ckpt_size, ways, total_lines, total_uc_size, members,
         restart_windows, visitors, truncated, recovered_bytes);
-    ::close(fd);
+    io::platform_io::close(fd);
 
     if (!success) {
         co_return std::nullopt;
@@ -998,7 +1000,7 @@ GzipIndexer::GzipIndexer(const std::string& gz_path_,
             "gz_path must not be empty");
     }
 
-    if (!fs::exists(gz_path)) {
+    if (!fs::exists(fs::u8path(gz_path))) {
         throw index::store::IndexerError(
             index::store::IndexerError::Type::FILE_ERROR,
             "gz_path does not exist: " + gz_path);
@@ -1120,7 +1122,8 @@ dftracer::utils::coro::CoroTask<void> GzipIndexer::build_async() const {
 bool GzipIndexer::is_valid() const { return cached_is_valid; }
 
 bool GzipIndexer::exists() const {
-    return fs::exists(index_path) && fs::is_directory(index_path);
+    return fs::exists(fs::u8path(index_path)) &&
+           fs::is_directory(fs::u8path(index_path));
 }
 
 bool GzipIndexer::need_rebuild() const {

@@ -11,6 +11,8 @@
 #include <dftracer/utils/core/coro/when_all.h>
 #include <dftracer/utils/core/coro/yield.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/platform_io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/core/tasks/coro_scope.h>
 #include <dftracer/utils/dataframe/sketch.h>
 #include <dftracer/utils/trace/genesis/genesis.h>
@@ -1260,20 +1262,21 @@ coro::CoroTask<ReaderSize> reader_size(const std::string& file) {
     ReaderSize out;
     co_await probe_slots().acquire(1);
     SlotGuard probe(probe_slots(), 1);
-    const ssize_t fd = co_await io::open(file.c_str(), O_RDONLY);
+    const io::IoResult fd = co_await io::open(file.c_str(), O_RDONLY);
     if (fd < 0) co_return out;
     ScopedFd guard(static_cast<int>(fd));
-    struct stat st{};
-    if (::fstat(guard.get(), &st) != 0) co_return out;
+    io::FileStat st{};
+    if (io::platform_io::stat_fd(guard.get(), &st) != 0) co_return out;
     out.file_bytes = static_cast<std::uint64_t>(st.st_size);
     if (st.st_size < 18) {
         out.slots = 1;
         co_return out;
     }
     unsigned char trailer[4];
-    if (co_await io::pread(guard.get(), trailer, sizeof trailer,
-                           st.st_size - static_cast<off_t>(sizeof trailer)) !=
-        static_cast<ssize_t>(sizeof trailer))
+    if (co_await io::pread(
+            guard.get(), trailer, sizeof trailer,
+            st.st_size - static_cast<io::FileOffset>(sizeof trailer)) !=
+        static_cast<io::IoResult>(sizeof trailer))
         co_return out;
     const std::uint64_t isize = static_cast<std::uint64_t>(trailer[0]) |
                                 static_cast<std::uint64_t>(trailer[1]) << 8 |

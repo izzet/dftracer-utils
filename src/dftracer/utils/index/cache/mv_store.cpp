@@ -1,5 +1,6 @@
 #include <dftracer/utils/core/common/filesystem.h>
 #include <dftracer/utils/core/common/hash/fnv1a.h>
+#include <dftracer/utils/core/io/platform_io.h>
 #include <dftracer/utils/duql/query.h>
 #include <dftracer/utils/duql/subsumption.h>
 #include <dftracer/utils/index/cache/mv_store.h>
@@ -10,8 +11,6 @@
 #include <dftracer/utils/trace/views/view_plan.h>
 #include <fcntl.h>
 #include <simdjson.h>
-#include <sys/file.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -418,10 +417,11 @@ bool view_is_fresh(const trace::views::detail::ViewPlan& plan) {
 
 int lock_view_dir(const std::string& dir) {
     const std::string path = (fs::path(dir) / ".lock").string();
-    const int fd = ::open(path.c_str(), O_CREAT | O_RDWR, 0644);
+    const int fd = io::platform_io::open(path.c_str(), O_CREAT | O_RDWR, 0644);
     if (fd < 0) return -1;
-    if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {  // another builder holds it
-        ::close(fd);
+    if (io::platform_io::try_lock_exclusive(fd) !=
+        0) {  // another builder holds it
+        io::platform_io::close(fd);
         return -1;
     }
     return fd;  // released (and the advisory lock dropped) by unlock_view_dir
@@ -429,8 +429,8 @@ int lock_view_dir(const std::string& dir) {
 
 void unlock_view_dir(int fd) {
     if (fd < 0) return;
-    ::flock(fd, LOCK_UN);
-    ::close(fd);
+    io::platform_io::unlock(fd);
+    io::platform_io::close(fd);
 }
 
 std::string materialize_view_dir(const trace::views::detail::ViewPlan& plan) {

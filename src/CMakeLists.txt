@@ -996,18 +996,23 @@ foreach(variant shared static)
     # Force a reference through the unmangled anchor in both cases. Mach-O
     # prefixes an underscore, and does not default to --as-needed, which is why
     # the shared half only ever failed on Linux.
-    if(APPLE)
+    if(APPLE OR (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4))
       set(host_ops_anchor "_dftu_register_host_ops")
     else()
       set(host_ops_anchor "dftu_register_host_ops")
     endif()
-    target_link_options(dftracer_utils_utilities_${variant} INTERFACE
-                        "LINKER:-u,${host_ops_anchor}")
+    if(MSVC)
+      target_link_options(dftracer_utils_utilities_${variant} INTERFACE
+                          "LINKER:/INCLUDE:${host_ops_anchor}")
+    else()
+      target_link_options(dftracer_utils_utilities_${variant} INTERFACE
+                          "LINKER:-u,${host_ops_anchor}")
+    endif()
     # GNU ld does not count -u as a reference when deciding --as-needed, so the
     # shared library is still dropped from DT_NEEDED and its initializer never
     # runs. Keep the dependency explicitly; Mach-O has no --as-needed and needs
     # only the -u above.
-    if(NOT APPLE AND variant STREQUAL "shared")
+    if(UNIX AND NOT APPLE AND variant STREQUAL "shared")
       target_link_options(dftracer_utils_utilities_shared INTERFACE
                           "LINKER:--no-as-needed")
     endif()

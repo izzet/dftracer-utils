@@ -6,6 +6,7 @@
 #include <dftracer/utils/core/common/scoped_fd.h>
 #include <dftracer/utils/core/coro/async_generator.h>
 #include <dftracer/utils/core/io/io.h>
+#include <dftracer/utils/core/io/types.h>
 #include <dftracer/utils/utilities/fileio/compress/gzip_member_reader.h>
 #include <dftracer/utils/utilities/fileio/lines/line_types.h>
 #include <sys/stat.h>
@@ -26,8 +27,7 @@ namespace dftracer::utils::utilities::fileio::lines::sources {
 inline coro::AsyncGenerator<Line> async_streaming_gz_lines(
     std::string file_path, std::size_t start_line = 0, std::size_t end_line = 0,
     bool recover_truncated = true) {
-    ssize_t fd_result =
-        co_await ::dftracer::utils::io::open(file_path.c_str(), O_RDONLY);
+    io::IoResult fd_result = co_await io::open(file_path.c_str(), O_RDONLY);
     if (fd_result < 0) {
         throw DFTUtilsException(
             ErrorCode::IO,
@@ -36,8 +36,8 @@ inline coro::AsyncGenerator<Line> async_streaming_gz_lines(
     }
     dftracer::utils::ScopedFd fd(static_cast<int>(fd_result));
 
-    struct stat st;
-    if (::fstat(fd.get(), &st) != 0) {
+    io::FileStat st;
+    if (co_await io::fstat(fd.get(), &st) != 0) {
         throw DFTUtilsException(ErrorCode::IO,
                                 "Cannot stat compressed file: " + file_path);
     }

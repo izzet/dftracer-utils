@@ -16,7 +16,8 @@ const std::string& scratch_root() noexcept;
 /// `<mount>/<user>/dftracer-utils/spill` on the node-local disk mount with the
 /// most free space that the user can write, created if missing. When no mount
 /// root is writable, the same under /var/tmp, then ~/.cache, if they are on a
-/// local disk. "" when there is none. RAM-backed (tmpfs) and network mounts
+/// local disk (LOCALAPPDATA and the user temp directory on Windows).
+/// "" when there is none. RAM-backed (tmpfs) and network mounts
 /// never qualify: spill files there would count against the memory limit or be
 /// slow. Cached. Independent of $DFTRACER_INDEX_SCRATCH.
 const std::string& local_spill_root() noexcept;

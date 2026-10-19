@@ -3,7 +3,11 @@
 #include <dftracer/utils/core/common/ptr_hash.h>
 #include <dftracer/utils/core/common/symbolize.h>
 #include <dftracer/utils/core/env.h>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <chrono>
 #include <cstdarg>
@@ -72,7 +76,11 @@ bool resolve_color(ColorMode mode, std::FILE* sink) {
     if (Env::get<std::string_view>("FORCE_COLOR") ||
         Env::get<std::string_view>("CLICOLOR_FORCE"))
         return true;
-    if (!isatty(fileno(sink))) return false;
+#ifdef _WIN32
+    if (!::_isatty(::_fileno(sink))) return false;
+#else
+    if (!::isatty(::fileno(sink))) return false;
+#endif
     const auto term = Env::get<std::string_view>("TERM");
     if (term && *term == "dumb") return false;
     return true;
@@ -80,6 +88,10 @@ bool resolve_color(ColorMode mode, std::FILE* sink) {
 
 const char* base_name(const char* path) {
     const char* slash = std::strrchr(path, '/');
+#ifdef _WIN32
+    const char* backslash = std::strrchr(path, '\\');
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
+#endif
     return slash ? slash + 1 : path;
 }
 
@@ -91,7 +103,11 @@ void make_timestamp(char* out, std::size_t n) {
               1000;
     std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tm;
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
     localtime_r(&t, &tm);
+#endif
     std::snprintf(out, n, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
                   tm.tm_min, tm.tm_sec, static_cast<int>(ms));

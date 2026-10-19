@@ -1,7 +1,11 @@
 #ifndef DFTRACER_UTILS_CORE_COMMON_SCOPED_FD_H
 #define DFTRACER_UTILS_CORE_COMMON_SCOPED_FD_H
 
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace dftracer::utils {
 
@@ -31,7 +35,11 @@ struct ScopedFd {
 
     void reset() {
         if (value >= 0) {
+#ifdef _WIN32
+            ::_close(value);
+#else
             ::close(value);
+#endif
             value = -1;
         }
     }

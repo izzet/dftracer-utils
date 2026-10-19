@@ -15,13 +15,15 @@ enum class FilesystemKind {
     LUSTRE,
     GPFS,
     BEEGFS,
+    SMB,  ///< Windows/SMB network shares, including mapped network drives
 };
 
-/// True for networked or parallel stores (NFS/Lustre/GPFS/BeeGFS), where
+/// True for networked or parallel stores (NFS/SMB/Lustre/GPFS/BeeGFS), where
 /// metadata- and fsync-heavy work such as index construction is slow.
 inline bool is_network_filesystem(FilesystemKind kind) noexcept {
     return kind == FilesystemKind::NFS || kind == FilesystemKind::LUSTRE ||
-           kind == FilesystemKind::GPFS || kind == FilesystemKind::BEEGFS;
+           kind == FilesystemKind::GPFS || kind == FilesystemKind::BEEGFS ||
+           kind == FilesystemKind::SMB;
 }
 
 /// True for node-local filesystems (disk or RAM) that make good scratch space.
@@ -35,10 +37,11 @@ inline bool is_memory_filesystem(FilesystemKind kind) noexcept {
     return kind == FilesystemKind::TMPFS;
 }
 
-/// Classify the filesystem backing `path` via statfs. When `path` does not
+/// Classify the filesystem backing `path` via statfs or Windows volume APIs.
+/// When `path` does not
 /// exist yet its nearest existing parent is probed instead (a file inherits its
 /// directory's filesystem on creation). Never throws; returns UNKNOWN only when
-/// statfs itself fails or the platform is unsupported.
+/// the OS query fails or the platform is unsupported.
 FilesystemKind filesystem_kind(const std::string& path) noexcept;
 
 /// The mount point that backs `path` (the longest mounted prefix), or "" when
@@ -52,8 +55,9 @@ struct MountInfo {
 };
 
 /// Every current mount and its filesystem kind, read from the OS mount table
-/// (Linux /proc/mounts, BSD getmntinfo) without a statfs per entry so a stale
-/// network mount cannot stall. Empty when the table is unavailable.
+/// (Linux /proc/mounts, BSD getmntinfo, Windows logical drives) without a
+/// statfs per entry so a stale network mount cannot stall. Empty when the table
+/// is unavailable.
 std::vector<MountInfo> list_mounts() noexcept;
 
 struct StripeInfo {

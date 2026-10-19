@@ -83,6 +83,7 @@ add_test(NAME agg_families
 # +++++++++++++++++++++++++++++++++++++++++
 
 set(TEST_CPP_SOURCES
+    core/test_platform_runtime.cpp
     # Core tests
     core/test_runtime.cpp
     core/test_runtime_abi.cpp

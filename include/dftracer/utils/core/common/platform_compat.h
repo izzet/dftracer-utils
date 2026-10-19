@@ -7,6 +7,7 @@
 // Windows specific includes and definitions
 #include <fcntl.h>
 #include <io.h>
+#include <process.h>
 // Load the CRT declarations before defining aliases so they cannot rewrite
 // function declarations or turn struct stat into a second _stat64.
 #include <stdio.h>
@@ -85,6 +86,14 @@
 #include <thread>
 
 namespace dftracer::utils {
+
+inline unsigned long process_id() noexcept {
+#ifdef _WIN32
+    return static_cast<unsigned long>(::_getpid());
+#else
+    return static_cast<unsigned long>(::getpid());
+#endif
+}
 
 /// Cores this machine reports, never 0. Overridable with
 /// DFTRACER_UTILS_HW_CONCURRENCY.

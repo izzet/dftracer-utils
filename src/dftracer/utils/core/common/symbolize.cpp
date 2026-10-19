@@ -1,7 +1,24 @@
-#include <cxxabi.h>
 #include <dftracer/utils/core/common/symbolize.h>
-#include <dlfcn.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+// DbgHelp requires the Windows declarations before its own header.
+#include <dbghelp.h>
+
+#include <mutex>
+#else
+#include <cxxabi.h>
+#include <dlfcn.h>
+#endif
+
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -75,6 +92,64 @@ std::string short_function(std::string_view full) {
 
 std::string symbolize_function(const void* fn) {
     if (fn == nullptr) return "?";
+#ifdef _WIN32
+    struct Symbols {
+        std::mutex mutex;
+        HANDLE process = nullptr;
+        Symbols() {
+            // Use a distinct real handle so we do not share a DbgHelp session
+            // with another library using the current-process pseudo handle.
+            process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                                  FALSE, GetCurrentProcessId());
+            if (process && !SymInitialize(process, nullptr, TRUE)) {
+                CloseHandle(process);
+                process = nullptr;
+            }
+        }
+        ~Symbols() {
+            if (process) {
+                SymCleanup(process);
+                CloseHandle(process);
+            }
+        }
+    };
+    static Symbols symbols;
+    // DbgHelp calls are single-threaded, including symbol undecoration.
+    std::lock_guard<std::mutex> lock(symbols.mutex);
+    if (symbols.process) {
+        struct {
+            SYMBOL_INFO info;
+            char name[MAX_SYM_NAME];
+        } storage{};
+        storage.info.SizeOfStruct = sizeof(SYMBOL_INFO);
+        storage.info.MaxNameLen = MAX_SYM_NAME;
+        if (SymFromAddr(symbols.process, reinterpret_cast<DWORD64>(fn), nullptr,
+                        &storage.info)) {
+            char undecorated[MAX_SYM_NAME]{};
+            if (UnDecorateSymbolName(storage.info.Name, undecorated,
+                                     sizeof(undecorated), UNDNAME_NAME_ONLY))
+                return short_function(undecorated);
+            return short_function(storage.info.Name);
+        }
+    }
+    MEMORY_BASIC_INFORMATION region{};
+    if (VirtualQuery(fn, &region, sizeof(region)) != 0 &&
+        region.AllocationBase) {
+        char module[MAX_PATH]{};
+        if (GetModuleFileNameA(static_cast<HMODULE>(region.AllocationBase),
+                               module, sizeof(module)) != 0) {
+            const char* name = std::strrchr(module, '\\');
+            name = name ? name + 1 : module;
+            const auto offset =
+                reinterpret_cast<std::uintptr_t>(fn) -
+                reinterpret_cast<std::uintptr_t>(region.AllocationBase);
+            char buffer[MAX_PATH + 32];
+            std::snprintf(buffer, sizeof(buffer), "%s+0x%llx", name,
+                          static_cast<unsigned long long>(offset));
+            return buffer;
+        }
+    }
+#else
     Dl_info info;
     if (dladdr(fn, &info) != 0 && info.dli_sname != nullptr) {
         int status = 0;
@@ -96,6 +171,7 @@ std::string symbolize_function(const void* fn) {
                       static_cast<unsigned long long>(off));
         return buf;
     }
+#endif
     return "?";
 }
 

@@ -3,6 +3,16 @@
 #include <dftracer/utils/core/common/filesystem_info.h>
 #include <sys/stat.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #ifdef __linux__
 #include <sys/vfs.h>
 
@@ -20,6 +30,7 @@
 #include <cstdlib>
 #endif
 
+#include <cwchar>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -63,6 +74,8 @@ FilesystemKind classify_magic(unsigned long magic) noexcept {
 FilesystemKind classify_fstype_name(std::string_view name) noexcept {
     if (name == "tmpfs" || name == "ramfs") return FilesystemKind::TMPFS;
     if (name == "nfs" || name == "nfs4") return FilesystemKind::NFS;
+    if (name == "cifs" || name == "smbfs" || name == "smb3")
+        return FilesystemKind::SMB;
     if (name == "lustre") return FilesystemKind::LUSTRE;
     if (name == "gpfs") return FilesystemKind::GPFS;
     if (name == "beegfs") return FilesystemKind::BEEGFS;
@@ -77,10 +90,16 @@ FilesystemKind classify_fstype_name(std::string_view name) noexcept {
 
 std::string probe_path(const std::string& path) noexcept {
     std::error_code ec;
-    if (fs::exists(path, ec)) return path;
-    auto parent = fs::path(path).parent_path();
-    if (parent.empty()) return std::string(".");
-    if (fs::exists(parent, ec)) return parent.string();
+    auto probe = fs::u8path(path);
+    while (!probe.empty()) {
+        if (fs::exists(probe, ec)) {
+            const auto text = probe.u8string();
+            return {reinterpret_cast<const char*>(text.data()), text.size()};
+        }
+        const auto parent = probe.parent_path();
+        if (parent == probe) break;
+        probe = parent;
+    }
     return std::string(".");
 }
 
@@ -91,6 +110,40 @@ bool same_device(const std::string& a, const std::string& b) noexcept {
         return false;
     return sa.st_dev == sb.st_dev;
 }
+
+#ifdef _WIN32
+std::wstring windows_mountpoint(const std::string& path) {
+    std::error_code ec;
+    const auto absolute = fs::absolute(fs::u8path(path), ec);
+    if (ec) return {};
+    std::wstring mount(32768, L'\0');
+    if (!GetVolumePathNameW(absolute.c_str(), mount.data(),
+                            static_cast<DWORD>(mount.size())))
+        return {};
+    mount.resize(std::wcslen(mount.c_str()));
+    return mount;
+}
+
+FilesystemKind windows_drive_kind(const wchar_t* root) noexcept {
+    switch (GetDriveTypeW(root)) {
+        case DRIVE_FIXED:
+        case DRIVE_REMOVABLE:
+        case DRIVE_CDROM:
+            return FilesystemKind::LOCAL;
+        case DRIVE_RAMDISK:
+            return FilesystemKind::TMPFS;
+        case DRIVE_REMOTE:
+            return FilesystemKind::SMB;
+        default:
+            return FilesystemKind::UNKNOWN;
+    }
+}
+
+std::string mount_to_utf8(const std::wstring& mount) {
+    const auto u8 = fs::path(mount).u8string();
+    return {reinterpret_cast<const char*>(u8.data()), u8.size()};
+}
+#endif
 
 #ifdef __linux__
 // Decode /proc/mounts octal escapes (e.g. "\040" for space).
@@ -116,7 +169,11 @@ std::string unescape_mount_field(const std::string& in) {
 
 FilesystemKind filesystem_kind(const std::string& path) noexcept {
     [[maybe_unused]] const std::string target = probe_path(path);
-#if defined(__linux__)
+#if defined(_WIN32)
+    const auto mount = windows_mountpoint(target);
+    return mount.empty() ? FilesystemKind::UNKNOWN
+                         : windows_drive_kind(mount.c_str());
+#elif defined(__linux__)
     struct statfs st{};
     if (::statfs(target.c_str(), &st) != 0) return FilesystemKind::UNKNOWN;
     return classify_magic(static_cast<unsigned long>(st.f_type));
@@ -131,6 +188,9 @@ FilesystemKind filesystem_kind(const std::string& path) noexcept {
 }
 
 std::string find_mountpoint(const std::string& path) noexcept {
+#ifdef _WIN32
+    return mount_to_utf8(windows_mountpoint(probe_path(path)));
+#else
     std::error_code ec;
     fs::path cur = fs::absolute(fs::path(probe_path(path)), ec);
     if (ec) return {};
@@ -143,11 +203,22 @@ std::string find_mountpoint(const std::string& path) noexcept {
         cur = parent;
     }
     return cur.string();
+#endif
 }
 
 std::vector<MountInfo> list_mounts() noexcept {
     std::vector<MountInfo> mounts;
-#if defined(__linux__)
+#if defined(_WIN32)
+    const DWORD needed = GetLogicalDriveStringsW(0, nullptr);
+    if (needed == 0) return mounts;
+    std::vector<wchar_t> drives(static_cast<std::size_t>(needed) + 1);
+    const DWORD written = GetLogicalDriveStringsW(
+        static_cast<DWORD>(drives.size()), drives.data());
+    if (written == 0 || written >= drives.size()) return mounts;
+    for (const wchar_t* drive = drives.data(); *drive;
+         drive += std::wcslen(drive) + 1)
+        mounts.push_back({mount_to_utf8(drive), windows_drive_kind(drive)});
+#elif defined(__linux__)
     std::ifstream f("/proc/mounts");
     std::string line;
     while (std::getline(f, line)) {

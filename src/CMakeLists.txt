@@ -438,7 +438,7 @@ foreach(variant shared static)
     target_link_libraries(dftracer_utils_core_${variant}
                           PUBLIC ${CMAKE_DL_LIBS})
     if(WIN32)
-      target_link_libraries(dftracer_utils_core_${variant} PUBLIC ws2_32)
+      target_link_libraries(dftracer_utils_core_${variant} PUBLIC ws2_32 dbghelp)
     endif()
 
     # Add stdfs if needed

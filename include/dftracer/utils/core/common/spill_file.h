@@ -11,7 +11,8 @@
 
 namespace dftracer::utils {
 
-/// One temp file in spill_dir(), unlinked at creation so a crash leaves
+/// One temp file in spill_dir(), unlinked at creation (delete-on-close on
+/// Windows) so a crash leaves
 /// nothing behind. append() and read() may be called from many threads; the
 /// bytes are in native endianness and never leave the machine.
 class SpillFile {

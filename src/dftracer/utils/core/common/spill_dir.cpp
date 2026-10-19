@@ -2,12 +2,17 @@
 #include <dftracer/utils/core/common/filesystem.h>
 #include <dftracer/utils/core/common/filesystem_info.h>
 #include <dftracer/utils/core/common/logging.h>
+#include <dftracer/utils/core/common/platform_compat.h>
 #include <dftracer/utils/core/common/scratch.h>
 #include <dftracer/utils/core/common/spill_dir.h>
 #include <dftracer/utils/core/common/spill_dir_internal.h>
 #include <dftracer/utils/core/env.h>
+#ifdef _WIN32
+#include <dftracer/utils/core/io/platform_io.h>
+#else
 #include <signal.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cerrno>
@@ -22,13 +27,36 @@ namespace dftracer::utils {
 
 namespace detail {
 
+namespace {
+bool writable_directory(const std::string& dir) {
+#ifdef _WIN32
+    // _access tests attributes, not whether the directory ACL permits file
+    // creation. Probe the actual operation and let the OS remove the file.
+    static std::atomic<unsigned long> counter{0};
+    const auto leaf =
+        str_cat(".dftu_probe_", process_id(), "_", counter.fetch_add(1));
+    const auto name = (fs::u8path(dir) / leaf).u8string();
+    const std::string path(reinterpret_cast<const char*>(name.data()),
+                           name.size());
+    const int fd = io::platform_io::open(
+        path.c_str(),
+        _O_CREAT | _O_EXCL | _O_RDWR | _O_TEMPORARY | _O_NOINHERIT, 0600);
+    if (fd < 0) return false;
+    io::platform_io::close(fd);
+    return true;
+#else
+    return ::access(dir.c_str(), W_OK | X_OK) == 0;
+#endif
+}
+}  // namespace
+
 Result<std::string> choose_spill_dir(
     const std::string& env, const std::string& local_root,
     const std::vector<std::string>& fallbacks) {
     std::error_code ec;
     if (!env.empty()) {
         fs::create_directories(env, ec);
-        if (!ec && ::access(env.c_str(), W_OK | X_OK) != 0)
+        if (!ec && !writable_directory(env))
             ec = std::make_error_code(std::errc::permission_denied);
         if (ec)
             return make_error(
@@ -42,8 +70,7 @@ Result<std::string> choose_spill_dir(
     // since.
     if (!local_root.empty()) {
         fs::create_directories(local_root, ec);
-        if (!ec && ::access(local_root.c_str(), W_OK | X_OK) == 0)
-            return local_root;
+        if (!ec && writable_directory(local_root)) return local_root;
     }
     // Spilled bytes on a RAM-backed file system stay in memory, which is what
     // spilling is meant to avoid, so such a directory is never chosen; a
@@ -57,7 +84,7 @@ Result<std::string> choose_spill_dir(
         if (is_memory_filesystem(filesystem_kind(probe))) continue;
         ec.clear();
         fs::create_directories(dir, ec);
-        if (ec || ::access(dir.c_str(), W_OK | X_OK) != 0) continue;
+        if (ec || !writable_directory(dir)) continue;
         return dir;
     }
     return make_error(
@@ -99,7 +126,12 @@ namespace {
 // whose pids mean nothing here.
 std::string host_tag() {
     char host[256] = {};
+#ifdef _WIN32
+    DWORD size = sizeof(host);
+    GetComputerNameA(host, &size);
+#else
     ::gethostname(host, sizeof(host) - 1);
+#endif
     std::string tag(host);
     for (char& c : tag)
         if (c == '/' || c == '_') c = '-';
@@ -125,7 +157,22 @@ void sweep_stale(const fs::path& root, std::string_view prefix) {
         const auto [stop, perr] = std::from_chars(first, last, pid);
         if (perr != std::errc{} || stop == last || *stop != '_' || pid <= 0)
             continue;
+#ifdef _WIN32
+        // Only remove a directory when the OS positively identifies a dead
+        // process. Access-denied and other uncertain queries keep it intact.
+        HANDLE process =
+            OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+        bool dead = false;
+        if (process) {
+            dead = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+            CloseHandle(process);
+        } else {
+            dead = GetLastError() == ERROR_INVALID_PARAMETER;
+        }
+        if (!dead) continue;
+#else
         if (::kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH) continue;
+#endif
         std::error_code rm;
         fs::remove_all(it->path(), rm);
     }
@@ -145,8 +192,8 @@ Result<ScopedSpillSubdir> ScopedSpillSubdir::create(std::string_view prefix) {
     }
     static std::atomic<std::uint64_t> counter{0};
     const fs::path dir =
-        fs::path(*root) / str_cat(prefix, "_", host_tag(), "_", ::getpid(), "_",
-                                  counter.fetch_add(1));
+        fs::path(*root) / str_cat(prefix, "_", host_tag(), "_", process_id(),
+                                  "_", counter.fetch_add(1));
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (ec)

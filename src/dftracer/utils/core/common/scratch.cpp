@@ -2,10 +2,13 @@
 #include <dftracer/utils/core/common/filesystem.h>
 #include <dftracer/utils/core/common/filesystem_info.h>
 #include <dftracer/utils/core/common/memory_budget.h>
+#include <dftracer/utils/core/common/platform_compat.h>
 #include <dftracer/utils/core/common/scratch.h>
 #include <dftracer/utils/core/env.h>
+#ifndef _WIN32
 #include <pwd.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cctype>
@@ -32,10 +35,11 @@ bool writable_dir(const std::string& dir) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (!fs::is_directory(dir, ec)) return false;
-    const std::string probe =
-        dir + "/.dftracer_probe_" + std::to_string(::getpid());
-    fs::create_directory(probe, ec);
-    if (ec) return false;
+    static std::atomic<std::uint64_t> probe_counter{0};
+    const std::string probe = dir + "/.dftracer_probe_" +
+                              std::to_string(process_id()) + "_" +
+                              std::to_string(probe_counter.fetch_add(1));
+    if (!fs::create_directory(probe, ec)) return false;
     fs::remove(probe, ec);
     return true;
 }
@@ -83,7 +87,16 @@ std::string compute_scratch_root(std::uint64_t needed) {
     std::string best;
     int best_tier = 0;
     std::uintmax_t best_avail = 0;
-    for (const auto& m : list_mounts()) {
+    auto candidates = list_mounts();
+#ifdef _WIN32
+    // Ordinary Windows users cannot write drive roots. Their temp directory
+    // provides writable scratch on the same classified local volume.
+    std::error_code tmp_error;
+    const auto tmp = fs::temp_directory_path(tmp_error);
+    if (!tmp_error)
+        candidates.push_back({tmp.string(), filesystem_kind(tmp.string())});
+#endif
+    for (const auto& m : candidates) {
         const int tier = locality_tier(m.kind);
         if (tier == 0) continue;
         if (!writable_dir(m.mountpoint)) continue;
@@ -102,12 +115,16 @@ std::string compute_scratch_root(std::uint64_t needed) {
 }
 
 std::string current_user() {
+#ifdef _WIN32
+    std::string u = env_str("USERNAME");
+#else
     std::string u = env_str("USER");
     if (u.empty()) u = env_str("LOGNAME");
     if (u.empty()) {
         if (struct passwd* pw = ::getpwuid(::getuid()); pw && pw->pw_name)
             u = pw->pw_name;
     }
+#endif
     return u.empty() ? std::string("nobody") : u;
 }
 
@@ -129,9 +146,18 @@ std::string compute_local_spill_root() {
     // own directories under a mount, not the mount itself), so try the
     // per-user places that live on disk: /var/tmp, then ~/.cache.
     if (best.empty()) {
-        std::vector<std::string> candidates{"/var/tmp"};
+        std::vector<std::string> candidates;
+#ifdef _WIN32
+        const std::string local = env_str("LOCALAPPDATA");
+        if (!local.empty()) candidates.push_back(local);
+        std::error_code tmp_error;
+        const auto tmp = fs::temp_directory_path(tmp_error);
+        if (!tmp_error) candidates.push_back(tmp.string());
+#else
+        candidates.push_back("/var/tmp");
         const std::string home = env_str("HOME");
         if (!home.empty()) candidates.push_back(home + "/.cache");
+#endif
         for (const auto& c : candidates) {
             if (filesystem_kind(c) == FilesystemKind::LOCAL &&
                 writable_dir(c)) {
@@ -182,7 +208,7 @@ ScratchSession::ScratchSession(std::uint64_t estimated_bytes) {
     const std::uint64_t id =
         g_session_counter.fetch_add(1, std::memory_order_relaxed);
     const std::string leaf =
-        std::to_string(::getpid()) + "_" + std::to_string(id);
+        std::to_string(process_id()) + "_" + std::to_string(id);
     const std::string dir =
         (fs::path(root) / current_user() / "dftracer-utils" / leaf)
             .lexically_normal()

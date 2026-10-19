@@ -285,6 +285,22 @@ function(create_library)
 
     setup_target_common(${SHARED_TARGET_NAME} "SHARED" "shared")
 
+    set(SHARED_LINK_NAME ${BASE_NAME})
+    if(WIN32)
+      # Export the existing out-of-line C++ API as well as the C ABI.
+      set_target_properties(
+        ${SHARED_TARGET_NAME}
+        PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON
+                   ARCHIVE_OUTPUT_NAME ${BASE_NAME}_dll
+                   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+      set(SHARED_LINK_NAME ${BASE_NAME}_dll)
+      if(MINGW)
+        # Explicit data exports otherwise disable GNU ld's automatic exports.
+        target_link_options(${SHARED_TARGET_NAME} PRIVATE
+                            "LINKER:--export-all-symbols")
+      endif()
+    endif()
+
     list(APPEND CREATED_TARGETS ${SHARED_TARGET_NAME})
     set(${LIB_NAME}_SHARED_TARGET
         ${SHARED_TARGET_NAME}
@@ -319,7 +335,7 @@ function(create_library)
       FIND_DEPENDENCIES
       ${LIB_FIND_DEPENDENCIES}
       OUTPUT_NAME
-      ${BASE_NAME})
+      ${SHARED_LINK_NAME})
   endif()
 
   # ============================================================================

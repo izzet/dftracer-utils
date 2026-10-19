@@ -18,7 +18,6 @@
 #include <dftracer/utils/trace/comparator/tree_table_formatter.h>
 #include <dftracer/utils/trace/internal/utils.h>
 #include <dftracer/utils/trace/metadata_collector_utility.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <ctime>

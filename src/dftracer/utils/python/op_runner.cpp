@@ -5,7 +5,8 @@
 #include <dftracer/utils/plugins/fold_adapter.h>
 #include <dftracer/utils/plugins/plugin.h>
 #include <dftracer/utils/python/op_runner.h>
-#include <dlfcn.h>
+// Keep native loader headers after the public project headers.
+#include <dftracer/utils/plugins/shared_library.h>
 
 #include <cstddef>
 #include <vector>
@@ -44,18 +45,18 @@ PyObject* jit_run_op(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    void* handle = dlopen(so_path, RTLD_NOW | RTLD_LOCAL);
+    void* handle = plugins::detail::open_library(so_path);
     if (!handle) {
         PyErr_Format(PyExc_RuntimeError, "cannot load op '%s': %s", so_path,
-                     dlerror());
+                     plugins::detail::library_error().c_str());
         return nullptr;
     }
-    auto build =
-        reinterpret_cast<build_op_fn>(dlsym(handle, "dftracer_build_op"));
+    auto build = reinterpret_cast<build_op_fn>(
+        plugins::detail::library_symbol(handle, "dftracer_build_op"));
     if (!build) {
         PyErr_Format(PyExc_RuntimeError,
                      "op '%s' exports no 'dftracer_build_op' symbol", so_path);
-        dlclose(handle);
+        plugins::detail::close_library(handle);
         return nullptr;
     }
 
@@ -90,7 +91,7 @@ PyObject* jit_run_op(PyObject*, PyObject* args) {
         }
         if (plugin && plugin->destroy) plugin->destroy(plugin->self);
     }
-    dlclose(handle);
+    plugins::detail::close_library(handle);
 
     if (!ran) {
         PyErr_Format(PyExc_RuntimeError, "op '%s' built no runnable graph",

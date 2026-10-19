@@ -89,7 +89,8 @@ bool PosixExecutor::execute_open(const Trace& trace,
 
         ensure_directory_exists(file_path);
 
-        int fd = open(file_path.c_str(), O_CREAT | O_RDWR, 0644);
+        int fd =
+            io::platform_io::open(file_path.c_str(), O_CREAT | O_RDWR, 0644);
         if (fd >= 0) {
             open_files_[trace.fhash] = fd;
             DFTRACER_UTILS_LOG_DEBUG("Opened file %s with fd %d",
@@ -111,7 +112,7 @@ bool PosixExecutor::execute_close(const Trace& trace,
 
     auto it = open_files_.find(trace.fhash);
     if (it != open_files_.end()) {
-        close(it->second);
+        io::platform_io::close(it->second);
         open_files_.erase(it);
         DFTRACER_UTILS_LOG_DEBUG("Closed file with hash %.*s",
                                  static_cast<int>(trace.fhash.size()),
@@ -138,7 +139,7 @@ bool PosixExecutor::execute_read(const Trace& trace,
                                  config.max_file_size);
         ensure_io_buffer(n);
         [[maybe_unused]] io::IoResult bytes_read =
-            read(it->second, io_buffer_.data(), n);
+            io::platform_io::read(it->second, io_buffer_.data(), n);
         DFTRACER_UTILS_LOG_DEBUG("Read %zd bytes", bytes_read);
     }
 
@@ -156,7 +157,7 @@ bool PosixExecutor::execute_write(const Trace& trace,
                                           config.max_file_size);
         ensure_io_buffer(write_size);
         [[maybe_unused]] io::IoResult bytes_written =
-            write(it->second, io_buffer_.data(), write_size);
+            io::platform_io::write(it->second, io_buffer_.data(), write_size);
         DFTRACER_UTILS_LOG_DEBUG("Wrote %zd bytes", bytes_written);
     }
 
@@ -171,7 +172,7 @@ bool PosixExecutor::execute_seek(const Trace& trace,
     auto it = open_files_.find(trace.fhash);
     if (it != open_files_.end() && trace.offset >= 0) {
         [[maybe_unused]] io::FileOffset result =
-            lseek(it->second, trace.offset, SEEK_SET);
+            io::platform_io::seek(it->second, trace.offset, SEEK_SET);
         DFTRACER_UTILS_LOG_DEBUG("Seek to offset %lld, result: %lld",
                                  static_cast<long long>(trace.offset),
                                  static_cast<long long>(result));

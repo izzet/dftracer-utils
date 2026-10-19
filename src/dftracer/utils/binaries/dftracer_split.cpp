@@ -108,9 +108,11 @@ static coro::CoroTask<int> run_split(const SplitArgParse* cli) {
 
     std::string temp_index_dir;
     if (index_dir.empty()) {
-        temp_index_dir = fs::temp_directory_path() /
-                         ("dftracer_idx_" + std::to_string(std::time(nullptr)) +
-                          "_" + std::to_string(getpid()));
+        temp_index_dir =
+            (fs::temp_directory_path() /
+             ("dftracer_idx_" + std::to_string(std::time(nullptr)) + "_" +
+              std::to_string(getpid())))
+                .string();
         fs::create_directories(temp_index_dir);
         index_dir = temp_index_dir;
         DFTRACER_UTILS_LOG_INFO("Created temporary index directory: %s",
@@ -184,9 +186,10 @@ static coro::CoroTask<int> run_split(const SplitArgParse* cli) {
 
         if (rechunk_dir.empty()) {
             rechunk_dir =
-                fs::temp_directory_path() /
-                ("dftracer_rechunk_" + std::to_string(std::time(nullptr)) +
-                 "_" + std::to_string(getpid()));
+                (fs::temp_directory_path() /
+                 ("dftracer_rechunk_" + std::to_string(std::time(nullptr)) +
+                  "_" + std::to_string(getpid())))
+                    .string();
             fs::create_directories(rechunk_dir);
         }
         std::string out =

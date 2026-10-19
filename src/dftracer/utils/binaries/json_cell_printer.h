@@ -1,6 +1,7 @@
 #ifndef DFTRACER_UTILS_BINARIES_JSON_CELL_PRINTER_H
 #define DFTRACER_UTILS_BINARIES_JSON_CELL_PRINTER_H
 
+#include <dftracer/utils/core/common/int128.h>
 #include <dftracer/utils/dataframe/internal/column_read.h>
 #include <dftracer/utils/dataframe/series.h>
 #include <dftracer/utils/dataframe/types.h>
@@ -48,8 +49,8 @@ inline std::string decimal_to_exact_string(const std::uint8_t* bytes,
         nonzero = false;
         std::uint64_t remainder = 0;
         for (auto it = words.rbegin(); it != words.rend(); ++it) {
-            __extension__ unsigned __int128 cur =
-                (static_cast<unsigned __int128>(remainder) << 64) | *it;
+            const uint128_t cur =
+                (static_cast<uint128_t>(remainder) << 64) | *it;
             *it = static_cast<std::uint64_t>(cur / 10);
             remainder = static_cast<std::uint64_t>(cur % 10);
             if (*it != 0) nonzero = true;

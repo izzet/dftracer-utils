@@ -10,18 +10,8 @@
 #include <dftracer/utils/plugins/reserved_names.h>
 #include <dftracer/utils/plugins/state_registry.h>
 #include <dftracer/utils/trace/views/view_plan.h>
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <dftracer/utils/core/common/filesystem.h>
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+// Keep native loader headers after the public project headers.
+#include <dftracer/utils/plugins/shared_library.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -43,48 +33,10 @@
 namespace dftracer::utils::plugins {
 
 namespace {
-void close_library(void* handle) {
-#ifdef _WIN32
-    FreeLibrary(static_cast<HMODULE>(handle));
-#else
-    dlclose(handle);
-#endif
-}
-
-void* open_library(const std::string& path) {
-#ifdef _WIN32
-    std::error_code ec;
-    auto absolute = fs::absolute(fs::u8path(path), ec);
-    if (ec) {
-        SetLastError(ERROR_PATH_NOT_FOUND);
-        return nullptr;
-    }
-    absolute.make_preferred();
-    return LoadLibraryExW(
-        absolute.c_str(), nullptr,
-        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-#else
-    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-#endif
-}
-
-void* library_symbol(void* handle, const char* name) {
-#ifdef _WIN32
-    return reinterpret_cast<void*>(
-        GetProcAddress(static_cast<HMODULE>(handle), name));
-#else
-    return dlsym(handle, name);
-#endif
-}
-
-std::string library_error() {
-#ifdef _WIN32
-    return std::system_category().message(static_cast<int>(GetLastError()));
-#else
-    const char* error = dlerror();
-    return error ? error : "unknown dlopen error";
-#endif
-}
+using detail::close_library;
+using detail::library_error;
+using detail::library_symbol;
+using detail::open_library;
 
 using View = trace::views::View;
 using ExportStats = trace::views::ExportStats;

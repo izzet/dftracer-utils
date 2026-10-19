@@ -6,6 +6,7 @@
 #include <dftracer/utils/utilities/fileio/compress/libdeflate_gzip.h>
 #include <dftracer/utils/utilities/reader/internal/gzip_reader.h>
 #include <dftracer/utils/utilities/reader/internal/stream_config.h>
+#include <dftracer/utils/utilities/replay/replay.h>
 #include <doctest/doctest.h>
 #include <testing_runtime.h>
 
@@ -17,6 +18,19 @@
 
 #ifdef DFTRACER_UTILS_ENABLE_ARROW_IPC
 #include <dftracer/utils/utilities/common/arrow/arrow.h>
+#endif
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+// Requires the native Windows types above.
+#include <winioctl.h>
 #endif
 
 using namespace dftracer::utils;
@@ -151,3 +165,40 @@ TEST_CASE("Arrow IPC maps UTF-8 paths and keeps moved readers usable") {
     CHECK(moved.open(path) == 0);
 }
 #endif
+
+TEST_CASE("replay preserves UTF-8 paths and 64-bit seek offsets") {
+    using namespace dftracer::utils::utilities::replay;
+    TestDirectory dir;
+    const auto output = dir.path / std::filesystem::path(u8"replay_\u4e2d");
+    ReplayConfig config;
+    config.output_directory = utf8_path(output);
+    PosixExecutor executor;
+    Trace trace;
+    trace.cat = "posix";
+    trace.fhash = "large";
+    trace.func_name = "open";
+    REQUIRE(executor.execute(trace, config));
+    const auto path = utf8_path(output / "replay_file_large");
+    io::FdHandle fd(files::open(path.c_str(), O_RDWR));
+    REQUIRE(fd.get() >= 0);
+#ifdef _WIN32
+    DWORD returned = 0;
+    REQUIRE(DeviceIoControl(reinterpret_cast<HANDLE>(_get_osfhandle(fd.get())),
+                            FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned,
+                            nullptr));
+#endif
+    trace.func_name = "lseek";
+    trace.offset = (std::int64_t{1} << 32) + 19;
+    REQUIRE(executor.execute(trace, config));
+    trace.func_name = "write";
+    trace.size = 1;
+    REQUIRE(executor.execute(trace, config));
+    trace.func_name = "close";
+    REQUIRE(executor.execute(trace, config));
+    io::FileStat info{};
+    REQUIRE(files::stat_fd(fd.get(), &info) == 0);
+    CHECK(info.st_size == trace.offset + 1);
+    char value = 0;
+    CHECK(files::pread(fd.get(), &value, 1, trace.offset) == 1);
+    CHECK(value == 'A');
+}

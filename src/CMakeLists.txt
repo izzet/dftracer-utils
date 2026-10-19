@@ -439,6 +439,11 @@ foreach(variant shared static)
                           PUBLIC ${CMAKE_DL_LIBS})
     if(WIN32)
       target_link_libraries(dftracer_utils_core_${variant} PUBLIC ws2_32 dbghelp)
+      if(variant STREQUAL "shared")
+        target_compile_definitions(dftracer_utils_core_shared
+                                   PUBLIC DFTU_CORE_SHARED
+                                   PRIVATE DFTU_BUILDING_CORE)
+      endif()
     endif()
 
     # Add stdfs if needed
@@ -928,6 +933,11 @@ foreach(variant shared static)
 
     # Set warnings
     target_set_warnings(dftracer_utils_utilities_${variant})
+    if(WIN32 AND variant STREQUAL "shared")
+      target_compile_definitions(dftracer_utils_utilities_shared
+                                 PUBLIC DFTU_UTILITIES_SHARED
+                                 PRIVATE DFTU_BUILDING_UTILITIES)
+    endif()
 
     # Add MPI compile definitions and link library when enabled
     if(DFTRACER_UTILS_ENABLE_MPI)

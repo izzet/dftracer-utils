@@ -1,6 +1,8 @@
 #ifndef DFTRACER_UTILS_CORE_UTILITIES_MONITOR_H
 #define DFTRACER_UTILS_CORE_UTILITIES_MONITOR_H
 
+#include <dftracer/utils/core/common/export.h>
+
 namespace dftracer::utils::utilities {
 
 /// How a coroutine first entered the monitor, shown as a tag in the report.
@@ -11,7 +13,7 @@ namespace dftracer::utils::utilities {
 enum class CoroKind : unsigned char { Task, Spawn, Io, Sync };
 
 namespace detail {
-extern bool g_monitor_deep;
+extern DFTU_CORE_EXPORT bool g_monitor_deep;
 }
 
 /// Deep mode (DFTRACER_UTILS_MONITOR=deep) also traces co_await'd CoroTasks

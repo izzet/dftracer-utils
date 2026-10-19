@@ -260,6 +260,17 @@ function(need_simdjson)
         PUBLIC $<BUILD_INTERFACE:${simdjson_SOURCE_DIR}/singleheader>
                $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
       target_compile_features(simdjson_shared PUBLIC cxx_std_17)
+      if(WIN32)
+        target_compile_definitions(
+          simdjson_shared
+          PRIVATE SIMDJSON_BUILDING_WINDOWS_DYNAMIC_LIBRARY=1
+          INTERFACE SIMDJSON_USING_WINDOWS_DYNAMIC_LIBRARY=1)
+        set_target_properties(
+          simdjson_shared
+          PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON
+                     ARCHIVE_OUTPUT_NAME simdjson_dll
+                     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+      endif()
       # Suppress warnings from simdjson (third-party code)
       target_compile_options(simdjson_shared PRIVATE -w)
       set_target_properties(
@@ -915,56 +926,18 @@ function(_try_zlib_ng OUT_VAR)
     "INSTALL_UTILS OFF"
     "SKIP_INSTALL_ALL ON")
 
-  if(NOT zlib-ng_ADDED)
-    # CPM reports ADDED=NO when zlib-ng was already added earlier (src/ adds it,
-    # then tests/ asks again) OR on a reconfigure of an existing build dir. Not
-    # a failure: the zlib-ng targets are still defined. Re-expose the dirs and
-    # report success, and ensure the dftracer_zlib_* aliases exist here too -
-    # the one-time property/install setup below is skipped, but the aliases must
-    # be (re)created idempotently because on a reconfigure the first (src/) call
-    # also takes this branch, so nothing else creates them and link_zlib() would
-    # otherwise find no zlib. add_library(ALIAS) name-collides globally, so the
-    # NOT TARGET guard makes each a no-op once it exists.
-    if(TARGET zlib-ng OR TARGET zlib-ng-static)
-      set(ZLIB_SOURCE_DIR
-          ${zlib-ng_SOURCE_DIR}
-          PARENT_SCOPE)
-      set(ZLIB_BINARY_DIR
-          ${zlib-ng_BINARY_DIR}
-          PARENT_SCOPE)
-      if(DFTRACER_UTILS_BUILD_SHARED
-         AND TARGET zlib-ng
-         AND NOT TARGET dftracer_zlib_shared)
-        get_target_property(_zng_a zlib-ng ALIASED_TARGET)
-        if(NOT _zng_a)
-          set(_zng_a zlib-ng)
-        endif()
-        add_library(dftracer_zlib_shared ALIAS ${_zng_a})
-        if(NOT TARGET dftracer::zlib)
-          add_library(dftracer::zlib ALIAS ${_zng_a})
-        endif()
-      endif()
-      if(DFTRACER_UTILS_BUILD_STATIC
-         AND TARGET zlib-ng-static
-         AND NOT TARGET dftracer_zlib_static)
-        get_target_property(_zngs_a zlib-ng-static ALIASED_TARGET)
-        if(NOT _zngs_a)
-          set(_zngs_a zlib-ng-static)
-        endif()
-        add_library(dftracer_zlib_static ALIAS ${_zngs_a})
-        if(NOT TARGET dftracer::zlibstatic)
-          add_library(dftracer::zlibstatic ALIAS ${_zngs_a})
-        endif()
-        if(NOT TARGET dftracer::zlib)
-          add_library(dftracer::zlib ALIAS ${_zngs_a})
-        endif()
-      endif()
-      set(${OUT_VAR}
-          TRUE
-          PARENT_SCOPE)
-      return()
-    endif()
+  if(NOT zlib-ng_ADDED AND NOT TARGET zlib-ng AND NOT TARGET zlib-ng-static)
     message(WARNING "zlib-ng CPM add failed; will fall back to madler/zlib")
+    return()
+  endif()
+
+  # CPM may report ADDED=NO even on the first call after reconfiguration.
+  # Use the targets to detect success, and configure/install them once per
+  # configure run instead of skipping that setup when ADDED is false.
+  if(TARGET dftracer_zlib_shared OR TARGET dftracer_zlib_static)
+    set(ZLIB_SOURCE_DIR ${zlib-ng_SOURCE_DIR} PARENT_SCOPE)
+    set(ZLIB_BINARY_DIR ${zlib-ng_BINARY_DIR} PARENT_SCOPE)
+    set(${OUT_VAR} TRUE PARENT_SCOPE)
     return()
   endif()
 
@@ -985,8 +958,14 @@ function(_try_zlib_ng OUT_VAR)
     if(_zng_type STREQUAL "SHARED_LIBRARY")
       set_target_properties(
         ${_zng_shared}
-        PROPERTIES OUTPUT_NAME dftracer_zlib LIBRARY_OUTPUT_DIRECTORY
-                                             ${CMAKE_BINARY_DIR}/lib)
+        PROPERTIES OUTPUT_NAME dftracer_zlib
+                   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+                   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+                   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+      if(WIN32)
+        set_target_properties(${_zng_shared}
+                              PROPERTIES ARCHIVE_OUTPUT_NAME dftracer_zlib_dll)
+      endif()
       target_include_directories(
         ${_zng_shared} PUBLIC $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
       if(NOT TARGET dftracer_zlib_shared)
@@ -1000,7 +979,8 @@ function(_try_zlib_ng OUT_VAR)
     endif()
   endif()
 
-  if(DFTRACER_UTILS_BUILD_STATIC AND TARGET zlib-ng-static)
+  if((DFTRACER_UTILS_BUILD_STATIC OR DFTRACER_UTILS_BUILD_SHARED)
+     AND TARGET zlib-ng-static)
     # In ZLIB_COMPAT mode zlib-ng-static can itself be an ALIAS (to zlibstatic);
     # set_target_properties/target_include_directories/install all reject alias
     # targets, so resolve to the real one. Guard the alias-adds so a reconfigure
@@ -1260,6 +1240,13 @@ function(need_zlib)
                      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
                      ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
         add_library(dftracer::zlib ALIAS dftracer_zlib_shared)
+        if(WIN32)
+          set_target_properties(
+            dftracer_zlib_shared
+            PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON
+                       ARCHIVE_OUTPUT_NAME dftracer_zlib_dll
+                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+        endif()
         dftracer_utils_ok("Added dftracer_zlib shared library")
       endif()
 
@@ -1450,7 +1437,7 @@ function(need_zstd)
             ${_zstd_t}
             PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
                        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-                       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+                       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
           # zstd's vendored legacy decoders trip GCC -Wmaybe-uninitialized;
           # third-party source, so silence it on zstd's own targets only.
           if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
@@ -1770,6 +1757,13 @@ function(need_nanoarrow)
                    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
                    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
       add_library(nanoarrow::nanoarrow ALIAS nanoarrow_shared)
+      if(WIN32)
+        set_target_properties(
+          nanoarrow_shared
+          PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON
+                     ARCHIVE_OUTPUT_NAME nanoarrow_dll
+                     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+      endif()
       list(APPEND NANOARROW_TARGETS nanoarrow_shared)
       dftracer_utils_ok("Added nanoarrow shared library")
     elseif(DFTRACER_UTILS_BUILD_STATIC)

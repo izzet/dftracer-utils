@@ -2,7 +2,10 @@ import atexit
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 
-from . import schemas  # noqa: F401
+from . import (
+    _dll,  # noqa: F401
+    schemas,  # noqa: F401
+)
 from .columnar import (  # noqa: F401
     Agg,
     ColumnExpr,

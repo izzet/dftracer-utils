@@ -14,7 +14,6 @@
 #include <dftracer/utils/trace/genesis/genesis.h>
 #include <dftracer/utils/utilities/fileio/gzip_line_writer.h>
 #include <fcntl.h>
-#include <sys/resource.h>
 
 #include <algorithm>
 #include <atomic>
@@ -33,6 +32,21 @@
 #ifdef DFTRACER_UTILS_ENABLE_MPI
 #include <dftracer/utils/core/distributed/mpi_transport.h>
 #include <mpi.h>
+#endif
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+// Requires the Windows types above.
+#include <psapi.h>
+#else
+#include <sys/resource.h>
 #endif
 
 using namespace dftracer::utils;
@@ -184,12 +198,20 @@ coro::CoroTask<void> group_feeder(coro::ChannelProducer<std::size_t> producer,
 
 // Peak resident memory of this process so far, in bytes.
 std::uint64_t peak_rss_bytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (!K32GetProcessMemoryInfo(GetCurrentProcess(), &counters,
+                                 sizeof(counters)))
+        return 0;
+    return static_cast<std::uint64_t>(counters.PeakWorkingSetSize);
+#else
     struct rusage ru{};
     ::getrusage(RUSAGE_SELF, &ru);
 #if defined(__APPLE__)
     return static_cast<std::uint64_t>(ru.ru_maxrss);
 #else
     return static_cast<std::uint64_t>(ru.ru_maxrss) * 1024;
+#endif
 #endif
 }
 

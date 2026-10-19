@@ -35,6 +35,23 @@ function(create_python_wrapper target_name)
         "create_python_wrapper requires CMAKE_INSTALL_VENV_BIN_DIR to be set")
   endif()
 
+  if(WIN32)
+    file(
+      GENERATE
+      OUTPUT ${CMAKE_BINARY_DIR}/venv_wrapper_${target_name}.cmd
+      CONTENT
+        "@echo off
+\"%~dp0..\\Lib\\site-packages\\dftracer\\bin\\${target_name}.exe\" %*
+exit /b %errorlevel%
+"
+      NEWLINE_STYLE WIN32)
+    install(
+      PROGRAMS ${CMAKE_BINARY_DIR}/venv_wrapper_${target_name}.cmd
+      DESTINATION ${CMAKE_INSTALL_VENV_BIN_DIR}
+      RENAME ${target_name}.cmd)
+    return()
+  endif()
+
   # Generate the shell wrapper script
   file(
     GENERATE

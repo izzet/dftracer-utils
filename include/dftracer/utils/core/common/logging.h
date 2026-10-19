@@ -3,6 +3,7 @@
 
 #include <dftracer/utils/core/common/compiler_compat.h>
 #include <dftracer/utils/core/common/config.h>
+#include <dftracer/utils/core/common/export.h>
 
 #include <atomic>
 #include <cstdarg>
@@ -50,7 +51,7 @@ namespace detail {
 
 /// Current runtime threshold; a message at Level L is emitted when L >=
 /// g_level.
-extern std::atomic<int> g_level;
+extern DFTU_CORE_EXPORT std::atomic<int> g_level;
 
 inline bool enabled(Level lvl) noexcept {
     return static_cast<int>(lvl) >= g_level.load(std::memory_order_relaxed);

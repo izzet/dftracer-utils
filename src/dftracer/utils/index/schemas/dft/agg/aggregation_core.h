@@ -35,6 +35,7 @@
 //   arg_uint(key) -> uint64      (get<uint64> semantics: clamp, 0 on miss)
 //   arg_double(key) -> double    (get<double> semantics: 0 on miss)
 //   arg_string(key) -> string_view (empty on miss / non-string)
+//   arg_key(key) -> string (scalar dimension, including numeric args)
 //   for_each_numeric_arg(fn) with fn(string_view key, uint64 u, double d) over
 //     every numeric arg (non-numbers skipped by the accessor).
 namespace dftracer::utils::index::schemas::dft::agg {
@@ -141,11 +142,14 @@ void aggregate_event(const Acc& acc, AggState& st, const AggregationConfig& cfg,
     if (time_bucket > st.max_time_bucket) st.max_time_bucket = time_bucket;
 
     std::vector<std::pair<std::string_view, std::string_view>> extra_keys_vec;
+    std::vector<std::string> extra_values;
     std::vector<std::pair<std::string_view, std::string_view>>* extra_ptr =
         nullptr;
     if (!cfg.extra_group_keys.empty()) {
+        extra_values.reserve(cfg.extra_group_keys.size());
         for (const auto& extra_key : cfg.extra_group_keys) {
-            auto value = acc.arg_string(extra_key);
+            extra_values.push_back(acc.arg_key(extra_key));
+            std::string_view value = extra_values.back();
             if (!value.empty()) {
                 extra_keys_vec.emplace_back(extra_key, value);
                 st.observed_extra_keys.emplace(extra_key);

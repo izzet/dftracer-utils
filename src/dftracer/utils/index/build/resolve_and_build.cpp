@@ -73,7 +73,8 @@ AggRun start_aggregation(const std::string& index_path,
     run.merger = std::make_unique<agg::EventAggregator>(run.db);
     agg::tier::write_config(
         *run.db,
-        {config.time_interval_us, config.params_hash(), config.group_by_file});
+        {config.time_interval_us, config.params_hash(), config.group_by_file,
+         config.extra_group_keys, config.custom_metric_fields});
     auto cfg = std::make_shared<agg::AggregationConfig>(config);
     run.factory = [cfg, intern = run.merger->intern_table()](
                       dftracer::utils::StringIntern& build_intern,

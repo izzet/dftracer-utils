@@ -2,6 +2,7 @@
 #define DFTRACER_UTILS_INDEX_SCHEMAS_DFT_AGG_AGGREGATION_FOLD_H
 
 #include <dftracer/utils/core/common/string_intern.h>
+#include <dftracer/utils/core/common/to_chars.h>
 #include <dftracer/utils/core/common/transparent_string_hash.h>
 #include <dftracer/utils/index/schemas/dft/agg/aggregation_config.h>
 #include <dftracer/utils/index/schemas/dft/agg/aggregation_core.h>
@@ -90,6 +91,20 @@ class PodAccessor {
             if (const auto* id = std::get_if<std::uint32_t>(v))
                 return resolve(*id);
         return {};
+    }
+
+    // Tier dimensions are strings, including scalar numeric args such as
+    // step=0. Preserve integer precision and use the scan's double formatting.
+    std::string arg_key(std::string_view k) const {
+        if (const auto* v = find(k)) {
+            if (const auto* i = std::get_if<std::int64_t>(v))
+                return std::to_string(*i);
+            if (const auto* u = std::get_if<std::uint64_t>(v))
+                return std::to_string(*u);
+            if (const auto* d = std::get_if<double>(v))
+                return dftracer::utils::double_text(*d);
+        }
+        return std::string(arg_string(k));
     }
 
     template <class Fn>

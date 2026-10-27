@@ -206,9 +206,11 @@ coro::CoroTask<Result<AggregationRunResult>> run_aggregation(
         if (input.force_rebuild ||
             !scan_result->stale_aggregation_roots.empty())
             tier::clear(*agg_db);
-        tier::write_config(*agg_db, {input.agg_config.time_interval_us,
-                                     input.agg_config.params_hash(),
-                                     input.agg_config.group_by_file});
+        tier::write_config(
+            *agg_db,
+            {input.agg_config.time_interval_us, input.agg_config.params_hash(),
+             input.agg_config.group_by_file, input.agg_config.extra_group_keys,
+             input.agg_config.custom_metric_fields});
         merger = std::make_unique<EventAggregator>(agg_db);
     }
 

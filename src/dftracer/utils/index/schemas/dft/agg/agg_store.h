@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace dftracer::utils::index::store {
 class IndexWrite;
@@ -36,6 +37,8 @@ struct Config {
     /// Consumers that read fhash off the key check this before concluding the
     /// trace touched no files.
     bool group_by_file = true;
+    std::vector<std::string> extra_group_keys;
+    std::vector<std::string> custom_metric_fields;
 };
 
 struct TimeBounds {

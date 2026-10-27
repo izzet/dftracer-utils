@@ -283,7 +283,8 @@ coro::AsyncGenerator<AggregationBatch> Aggregator::operator()(
     if (force_rebuild || !scan_result.stale_aggregation_roots.empty())
         tier::clear(*agg_db);
     tier::write_config(*agg_db, {config.time_interval_us, config.params_hash(),
-                                 config.group_by_file});
+                                 config.group_by_file, config.extra_group_keys,
+                                 config.custom_metric_fields});
     auto merger = std::make_unique<EventAggregator>(agg_db);
 
     std::vector<std::string> files_needing_work;

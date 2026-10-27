@@ -126,12 +126,36 @@ std::shared_ptr<RocksDatabase> open(const std::string& index_path,
 
 std::optional<Config> read_config(const RocksDatabase& db) {
     auto value = get(db, CONFIG_KEY);
-    if (!value || value->size() != CONFIG_BYTES) return std::nullopt;
+    if (!value || value->size() < CONFIG_BYTES) return std::nullopt;
     Config c;
     c.time_interval_us = layout::read_u64(*value);
     c.params_hash = layout::read_u64(std::string_view(*value).substr(8));
     c.group_by_file =
         (static_cast<std::uint8_t>((*value)[16]) & FLAG_GROUP_BY_FILE) != 0;
+    // The original 17-byte config remains readable. Optional dimensions and
+    // metrics tell readers exactly what the tier can answer, even when a
+    // configured field is absent from every event.
+    std::string_view tail(*value);
+    tail.remove_prefix(CONFIG_BYTES);
+    auto read_strings = [&](std::vector<std::string>& strings) {
+        if (tail.size() < 8) return false;
+        auto n = layout::read_u64(tail);
+        tail.remove_prefix(8);
+        if (n > tail.size() / 8) return false;
+        for (std::uint64_t i = 0; i < n; ++i) {
+            auto len = layout::read_u64(tail);
+            tail.remove_prefix(8);
+            if (len > tail.size()) return false;
+            strings.emplace_back(tail.substr(0, len));
+            tail.remove_prefix(len);
+            if (i + 1 < n && tail.size() < 8) return false;
+        }
+        return true;
+    };
+    if (!tail.empty() &&
+        (!read_strings(c.extra_group_keys) ||
+         !read_strings(c.custom_metric_fields) || !tail.empty()))
+        return std::nullopt;
     return c;
 }
 
@@ -141,6 +165,18 @@ void write_config(RocksDatabase& db, const Config& config) {
     layout::append_u64(value, config.params_hash);
     value.push_back(
         static_cast<char>(config.group_by_file ? FLAG_GROUP_BY_FILE : 0));
+    if (!config.extra_group_keys.empty() ||
+        !config.custom_metric_fields.empty()) {
+        auto append_strings = [&](const std::vector<std::string>& strings) {
+            layout::append_u64(value, strings.size());
+            for (const auto& s : strings) {
+                layout::append_u64(value, s.size());
+                value.append(s);
+            }
+        };
+        append_strings(config.extra_group_keys);
+        append_strings(config.custom_metric_fields);
+    }
     put(db, CONFIG_KEY, value);
 }
 

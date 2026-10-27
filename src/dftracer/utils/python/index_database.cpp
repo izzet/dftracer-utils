@@ -155,7 +155,8 @@ static PyObject *IndexDatabase_write_agg_config(IndexDatabaseObject *self,
     if (!run_blocking([&] {
             dftracer::utils::index::schemas::dft::agg::tier::write_config(
                 *self->db->db(), {config.time_interval_us, config.params_hash(),
-                                  config.group_by_file});
+                                  config.group_by_file, config.extra_group_keys,
+                                  config.custom_metric_fields});
         }))
         return NULL;
     Py_RETURN_NONE;

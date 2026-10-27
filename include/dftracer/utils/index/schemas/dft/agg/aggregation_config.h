@@ -77,6 +77,10 @@ struct AggregationConfig {
         h.update_value(normalize_time);
         h.update_value(group_by_file);
         h.update_value(extra_group_keys.size());
+        // Rebuild tiers that discarded numeric dimensions or lack the typed
+        // reader's extras metadata. Keep builds without extras unchanged.
+        if (!extra_group_keys.empty() || !custom_metric_fields.empty())
+            text("typed-extras-v1");
         for (const auto& k : extra_group_keys) text(k);
         h.update_value(custom_metric_fields.size());
         for (const auto& m : custom_metric_fields) text(m);

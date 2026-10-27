@@ -26,6 +26,7 @@
 #include <dftracer/utils/trace/views/view_plan.h>
 #include <dftracer/utils/trace/views/view_scan.h>
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <limits>
@@ -57,6 +58,17 @@ using index::store::internal::get_logical_path;
 // its max, so those ops are gated in answerable().
 bool answerable_field(const std::string& f) {
     return f == "dur" || f == "size" || f == "offset" || f == "ts" || f == "te";
+}
+
+std::string_view bare_arg(std::string_view f) {
+    if (f.starts_with("args.")) f.remove_prefix(5);
+    return f;
+}
+
+bool configured_metric(std::string_view field,
+                       const std::vector<std::string>& metrics) {
+    field = bare_arg(field);
+    return std::find(metrics.begin(), metrics.end(), field) != metrics.end();
 }
 
 // The tier's name for field `f` of `plan`: a dftracer field keeps its own. A
@@ -302,7 +314,8 @@ bool tier_serves_op(trace::views::AggOp op) {
 // Agg ops + reduced fields the tier can serve, shared by the EVENT-only and the
 // unified events+profiles paths (which differ only on group-key allowances).
 bool aggs_and_fields_answerable(const trace::views::detail::ViewPlan& plan,
-                                const trace::views::detail::AggSchema& sch) {
+                                const trace::views::detail::AggSchema& sch,
+                                const std::vector<std::string>& metrics = {}) {
     if (!tier_rows_match(plan)) return false;
     for (const auto& s : plan.agg) {
         if (!tier_serves_op(s.op)) return false;
@@ -329,7 +342,9 @@ bool aggs_and_fields_answerable(const trace::views::detail::ViewPlan& plan,
             return false;
     }
     for (const auto& f : sch.fields)
-        if (!answerable_field(tier_field(plan, f))) return false;
+        if (!answerable_field(tier_field(plan, f)) &&
+            !configured_metric(tier_field(plan, f), metrics))
+            return false;
     return true;
 }
 
@@ -386,7 +401,7 @@ std::string key_value(const AggKeyView& kv, const trace::views::GroupKey& gk,
             // Resolved from the key's extra_keys (e.g. PROFILE epoch/step);
             // requires the key to have been parsed with want_extra_keys.
             for (const auto& [k, v] : kv.extra_keys)
-                if (k == gk.arg) return std::string(v);
+                if (k == bare_arg(gk.arg)) return std::string(v);
             return {};
     }
     return {};
@@ -635,7 +650,8 @@ struct TierValueCol {
 
 std::vector<TierValueCol> tier_value_cols(
     const trace::views::detail::ViewPlan& plan,
-    const std::vector<std::string>& value_names) {
+    const std::vector<std::string>& value_names,
+    const std::vector<std::string>& metrics = {}) {
     const dataframe::FieldStatDomain domain =
         trace::views::detail::plan_by_path(plan)
             ? dataframe::FieldStatDomain::I64
@@ -650,7 +666,10 @@ std::vector<TierValueCol> tier_value_cols(
             base == std::string(dftracer::utils::ARGS_PREFIX) + "offset")
             base = "offset";
         std::string field = tier_field(plan, base);
-        if (!answerable_field(field)) continue;  // e.g. a SetUnion text column
+        if (!answerable_field(field)) {
+            if (!configured_metric(field, metrics)) continue;
+            field = std::string(bare_arg(field));
+        }
         out.push_back(
             {static_cast<std::int32_t>(vc), std::move(field), domain});
     }
@@ -663,7 +682,8 @@ std::vector<TierValueCol> tier_value_cols(
 // DDSketch.
 std::vector<dataframe::AggSeedValue> row_seed_values(
     const std::vector<TierValueCol>& cols, const AggMetricsFullView& mv,
-    std::vector<utilities::common::statistics::DDSketch>& sketch_store) {
+    std::vector<utilities::common::statistics::DDSketch>& sketch_store,
+    const CustomMetricsMap* custom_metrics = nullptr) {
     std::vector<dataframe::AggSeedValue> out;
     out.reserve(cols.size());
     sketch_store.clear();
@@ -672,6 +692,11 @@ std::vector<dataframe::AggSeedValue> row_seed_values(
         dataframe::AggSeedValue v;
         v.value_col = cols[i].value_col;
         fill_field(v.stat, cols[i].field, mv, cols[i].domain);
+        if (custom_metrics && !answerable_field(cols[i].field)) {
+            if (auto it = custom_metrics->find(cols[i].field);
+                it != custom_metrics->end())
+                v.stat = it->second.stat;
+        }
         const std::string_view blob = cols[i].field == "dur" ? mv.dur_sketch
                                       : cols[i].field == "size"
                                           ? mv.size_sketch
@@ -833,7 +858,6 @@ bool events_profiles_collect(const trace::views::detail::ViewPlan& plan,
     // maps onto the CF's stored bucket grain and is supported.
     if (plan.time_range) return false;
     if (plan.query && !query_answerable(plan)) return false;
-    if (!aggs_and_fields_answerable(plan, sch)) return false;
     const auto group_by = tier_group_keys(plan);
     if (!group_by) return false;
     // A path plan buckets on its time role, which the tier holds in
@@ -846,6 +870,8 @@ bool events_profiles_collect(const trace::views::detail::ViewPlan& plan,
 
     const auto tc = covering_tier(plan);
     if (!tc) return false;
+    const auto& metrics = tc->handle->config.custom_metric_fields;
+    if (!aggs_and_fields_answerable(plan, sch, metrics)) return false;
     if (!tc->has_sketches)
         for (const auto& s : plan.agg)
             if (s.op == trace::views::AggOp::Pct ||
@@ -859,11 +885,19 @@ bool events_profiles_collect(const trace::views::detail::ViewPlan& plan,
         (plan.time_bucket_us < tc->interval_us ||
          plan.time_bucket_us % tc->interval_us != 0))
         return false;
-    // Any Arg group key (e.g. epoch/step) lives in the PROFILE key's
-    // extra_keys.
+    // Both events and profiles carry configured scalar dimensions. A key
+    // that was not retained cannot be reconstructed from the tier.
     bool want_extra = false;
-    for (const auto& gk : plan.group_by)
-        if (gk.kind == trace::views::GroupKey::Kind::Arg) want_extra = true;
+    for (const auto& gk : *group_by) {
+        if (gk.kind == trace::views::GroupKey::Kind::Arg ||
+            gk.kind == trace::views::GroupKey::Kind::Field) {
+            const auto& extra = tc->handle->config.extra_group_keys;
+            if (std::find(extra.begin(), extra.end(), bare_arg(gk.arg)) ==
+                extra.end())
+                return false;
+            want_extra = true;
+        }
+    }
     // A transformed key needs its resolved+transformed value at seed time
     // (finalize resolves the plain resolved keys itself).
     bool any_transform = false;
@@ -881,7 +915,10 @@ bool events_profiles_collect(const trace::views::detail::ViewPlan& plan,
     dataframe::LoweredGroupAggs lowered =
         dataframe::lower_group_aggs(ispec.gaggs);
     const std::vector<TierValueCol> vcols =
-        tier_value_cols(plan, lowered.value_names);
+        tier_value_cols(plan, lowered.value_names, metrics);
+    const bool wants_custom_metrics = std::any_of(
+        vcols.begin(), vcols.end(),
+        [](const TierValueCol& c) { return !answerable_field(c.field); });
     auto ev_state = dataframe::agg_new(lowered.specs, ispec.dyn_specs);
     auto prof_state = dataframe::agg_new(lowered.specs, ispec.dyn_specs);
     dataframe::agg_seed_begin(*ev_state, nkeys);
@@ -932,9 +969,15 @@ bool events_profiles_collect(const trace::views::detail::ViewPlan& plan,
             if (has_bucket)
                 keys.push_back(std::to_string(tier_time_bucket(kv, plan)));
             build_tier_keys(keys, *group_by, kv, resolver, fbuf);
-            dataframe::agg_seed_group(is_profile ? *prof_state : *ev_state,
-                                      keys, mv.count,
-                                      row_seed_values(vcols, mv, sketch_store));
+            // The fast view skips custom metrics. Decode them only when the
+            // query asks for them, leaving the default read path unchanged.
+            std::optional<AggregationMetrics> custom;
+            if (wants_custom_metrics) custom = deserialize_agg_value(vdata);
+            dataframe::agg_seed_group(
+                is_profile ? *prof_state : *ev_state, keys, mv.count,
+                row_seed_values(
+                    vcols, mv, sketch_store,
+                    custom ? custom->custom_metrics.get() : nullptr));
             return true;
         });
 

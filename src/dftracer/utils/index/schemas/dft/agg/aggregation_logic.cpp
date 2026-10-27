@@ -1,4 +1,5 @@
 #include <dftracer/utils/core/common/string_intern.h>
+#include <dftracer/utils/core/common/to_chars.h>
 #include <dftracer/utils/index/schemas/dft/agg/aggregation_logic.h>
 #include <dftracer/utils/index/schemas/dft/agg/reserved_args.h>
 #include <dftracer/utils/trace/args_map.h>
@@ -90,7 +91,16 @@ AggregationKey build_aggregation_key(const trace::DFTracerEvent& ev,
         key.extra_keys = std::make_unique<
             std::vector<std::pair<std::uint32_t, std::uint32_t>>>();
         for (const auto& extra_key : config.extra_group_keys) {
-            std::string_view value = ev.args[extra_key].get<std::string_view>();
+            const auto arg = ev.args[extra_key];
+            std::string number;
+            std::string_view value = arg.get<std::string_view>();
+            if (arg.is_uint())
+                number = std::to_string(arg.get<std::uint64_t>());
+            else if (arg.is_int())
+                number = std::to_string(arg.get<std::int64_t>());
+            else if (arg.is_number())
+                number = dftracer::utils::double_text(arg.get<double>());
+            if (!number.empty()) value = number;
             if (!value.empty()) {
                 key.extra_keys->emplace_back(intern.get_or_insert(extra_key),
                                              intern.get_or_insert(value));

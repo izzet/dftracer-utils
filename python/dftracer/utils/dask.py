@@ -502,6 +502,7 @@ def _dv_typed_ipc_task(
     shard_end: int,
     group_keys: Optional[Tuple[str, ...]] = None,
     drop_file_patterns: Tuple[str, ...] = (),
+    metric_fields: Tuple[str, ...] = (),
 ) -> Dict[str, Optional[bytes]]:
     """Worker: one CF shard range read + mapped to the dfanalyzer frame schema,
     returned as ``{events, profiles, system}`` Arrow IPC bytes. Time columns are
@@ -527,6 +528,7 @@ def _dv_typed_ipc_task(
         group_keys=group_keys,
         drop_file_patterns=drop_file_patterns,
         progress=forward,
+        metric_fields=metric_fields,
     )
 
 
@@ -753,6 +755,7 @@ class DaskTraceViewer:
         time_resolution: float,
         group_keys: Optional[Tuple[str, ...]] = None,
         drop_file_patterns: Tuple[str, ...] = (),
+        metric_fields: Tuple[str, ...] = (),
     ) -> "Tuple[List[Future], List[Optional[str]]]":
         """Distributed typed read as per-worker IPC futures.
 
@@ -791,6 +794,7 @@ class DaskTraceViewer:
                     se,
                     group_keys,
                     drop_file_patterns,
+                    metric_fields,
                     workers=[addr] if addr else None,
                     pure=False,
                 )

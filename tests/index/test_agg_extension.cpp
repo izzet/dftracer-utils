@@ -127,6 +127,61 @@ double count_reads(const std::vector<std::string>& traces) {
 }  // namespace
 
 TEST_SUITE("AggExtension") {
+    TEST_CASE("tier config round trips old and extended records") {
+        namespace tier = index::schemas::dft::agg::tier;
+        TestEnvironment env(10);
+        auto db = tier::open(env.get_dir() + "/config",
+                             index::store::RocksDatabase::OpenMode::ReadWrite);
+        tier::Config config{1000, 42, false};
+        tier::write_config(*db, config);
+        auto old = tier::read_config(*db);
+        REQUIRE(old);
+        CHECK(old->time_interval_us == 1000);
+        CHECK(old->params_hash == 42);
+        CHECK_FALSE(old->group_by_file);
+        CHECK(old->extra_group_keys.empty());
+        CHECK(old->custom_metric_fields.empty());
+
+        config.extra_group_keys = {"step", "workflow_id"};
+        config.custom_metric_fields = {"prompt_tokens", "completion_tokens"};
+        tier::write_config(*db, config);
+        auto extended = tier::read_config(*db);
+        REQUIRE(extended);
+        CHECK(extended->extra_group_keys == config.extra_group_keys);
+        CHECK(extended->custom_metric_fields == config.custom_metric_fields);
+        CHECK(extended->time_interval_us == old->time_interval_us);
+        CHECK(extended->params_hash == old->params_hash);
+        CHECK(extended->group_by_file == old->group_by_file);
+
+        config.extra_group_keys.clear();
+        config.custom_metric_fields.clear();
+        tier::write_config(*db, config);
+        REQUIRE(tier::read_config(*db));
+        CHECK(tier::read_config(*db)->extra_group_keys.empty());
+        CHECK(tier::read_config(*db)->custom_metric_fields.empty());
+    }
+
+    TEST_CASE("adding extras rebuilds the tier without rebuilding bloom") {
+        TestEnvironment env(10);
+        const auto gz = write_trace(env.get_dir(), "extras", 50, 1000);
+        auto options = with_aggregation(1000000);
+        auto ix = Indexer::open({gz}, options);
+        ix.build();
+        plant_sentinel(gz);
+        const auto before = agg_entry(ix, gz);
+        REQUIRE(before);
+        options.aggregation->extra_group_keys = {"step"};
+        options.aggregation->custom_metric_fields = {"completion_tokens"};
+        auto changed = Indexer::open({gz}, options);
+        CHECK_FALSE(changed.status().needs_work.empty());
+        changed.build();
+        REQUIRE(agg_entry(changed, gz));
+        CHECK(agg_entry(changed, gz)->params_hash != before->params_hash);
+        CHECK(has_sentinel(gz));
+        CHECK(count_reads({gz}) == 50);
+        CHECK(Indexer::open({gz}, options).status().needs_work.empty());
+    }
+
     TEST_CASE("an aggregated file lists a current dftracer.agg entry") {
         TestEnvironment env(10);
         const auto gz = write_trace(env.get_dir(), "a", 50, 1000);

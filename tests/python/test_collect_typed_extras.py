@@ -107,3 +107,96 @@ def test_typed_configured_but_absent_metric(tmp_path):
     assert regular == [
         {"cat": "llm", "count": 2, "sum_absent_tokens": 0, "mean_absent_tokens": None}
     ]
+
+
+def test_dfanalyzer_ipc_retains_declared_dimensions_and_metrics(tmp_path):
+    from dftracer.utils.dfanalyzer import (
+        _ipc_to_pandas,
+        _typed_read_to_ipc,
+        typed_group_keys,
+        view_typed_frames,
+    )
+
+    agent_trace(tmp_path, range(7))
+    # The task entry point used by both NullClient and real Dask workers.
+    ipc = _typed_read_to_ipc(
+        [str(tmp_path / "agent.pfw.gz")],
+        str(tmp_path / "index" / ".dftindex"),
+        5.0,
+        1e6,
+        group_keys=(*typed_group_keys(), "arg:step", "arg:workflow_id"),
+        metric_fields=("completion_tokens",),
+    )
+    events = _ipc_to_pandas(ipc["events"]).sort_values("step")
+    assert list(events["step"]) == list(map(str, range(7)))
+    assert list(events["workflow_id"]) == ["toy"] * 7
+    assert list(events["completion_tokens"]) == [120 + 10 * i for i in range(7)]
+    assert list(events["count"]) == [2] * 7
+    assert ipc["profiles"] is None
+    frames = view_typed_frames(
+        [str(tmp_path / "agent.pfw.gz")],
+        str(tmp_path / "index" / ".dftindex"),
+        time_granularity=5.0,
+        group_keys=(*typed_group_keys(), "arg:step", "arg:workflow_id"),
+        metric_fields=("completion_tokens",),
+    )
+    direct = frames["events"].sort_values("step")
+    assert list(direct["step"]) == list(events["step"])
+    assert list(direct["completion_tokens"]) == list(events["completion_tokens"])
+
+
+def test_preaggregated_profile_preserves_numeric_keys_and_custom_stats(tmp_path):
+    path = tmp_path / "profile.pfw.gz"
+    event = dict(
+        ph="C",
+        cat="llm",
+        name="call",
+        pid=1,
+        tid=1,
+        ts=100,
+        args={
+            "step": 0,
+            "count": 3,
+            "dur_sum": 90,
+            "dur_min": 20,
+            "dur_max": 40,
+            "completion_tokens_sum": 60,
+            "completion_tokens_min": 10,
+            "completion_tokens_max": 30,
+        },
+    )
+    path.write_bytes(gzip.compress((json.dumps(event) + "\n").encode()))
+    with Indexer(
+        files=[str(path)],
+        index_dir=str(tmp_path / "index"),
+        require_aggregation=AggregationConfig(
+            group_keys=["step"], custom_metric_fields=["completion_tokens"]
+        ),
+    ) as indexer:
+        status = indexer.ensure_indexed()
+    typed = (
+        TraceViewer([str(path)], index_path=status.index_path)
+        .group_by("cat", "arg:step")
+        .agg(
+            "count",
+            "sum:dur",
+            "sum:completion_tokens",
+            "min:completion_tokens",
+            "max:completion_tokens",
+            "mean:completion_tokens",
+        )
+        .collect_typed()
+    )
+    assert pa.table(typed["regular"]).num_rows == 0
+    assert pa.table(typed["aggregated"]).to_pylist() == [
+        {
+            "cat": "llm",
+            "step": "0",
+            "count": 3,
+            "sum_dur": 90,
+            "sum_completion_tokens": 60,
+            "min_completion_tokens": 10,
+            "max_completion_tokens": 30,
+            "mean_completion_tokens": 20,
+        }
+    ]

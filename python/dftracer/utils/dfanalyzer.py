@@ -156,6 +156,8 @@ def _typed_event_frame(
     time_origin: int = 0,
     bucket_us: int = 0,
     is_profile: bool = False,
+    extra_fields: Tuple[str, ...] = (),
+    metric_fields: Tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """Map one collect_typed table (regular or aggregated) to the dfanalyzer
     event/profile schema, scaling durations by `time_resolution`.
@@ -199,6 +201,10 @@ def _typed_event_frame(
     for c in df.columns:
         if c.startswith("arg_"):
             out[c[len("arg_") :]] = df[c]
+    for c in extra_fields:
+        out[c] = df[c].astype("string").fillna("")
+    for c in metric_fields:
+        out[c] = pd.to_numeric(df["sum_" + c]).astype("float64")
     tr = float(time_resolution)
     out["count"] = df["count"].astype("int64")
     out["time"] = df["sum_dur"] / tr
@@ -252,6 +258,7 @@ def view_typed_frames(
     duql: Optional[str] = None,
     client: "Optional[Client]" = None,
     group_keys: Optional[Tuple[str, ...]] = None,
+    metric_fields: Tuple[str, ...] = (),
 ) -> TypedFrames:
     """One-pass read of the aggregation index's three record families, each
     mapped to the dfanalyzer frame schema.
@@ -281,7 +288,12 @@ def view_typed_frames(
         tv = DaskTraceViewer(files, index_path or "", client=client)
     if duql:
         tv = tv.filter(duql)
-    typed = tv.group_by(*keys).time_bucket(bucket_us).agg(*_TYPED_AGGS).collect_typed()
+    typed = (
+        tv.group_by(*keys)
+        .time_bucket(bucket_us)
+        .agg(*_TYPED_AGGS, *("sum:" + c for c in metric_fields))
+        .collect_typed()
+    )
 
     reg_pd, agg_pd = _capsule_to_pandas(typed["regular"]), _capsule_to_pandas(typed["aggregated"])
     # origin = global min time_bucket over events+profiles, matching the C++
@@ -294,9 +306,14 @@ def view_typed_frames(
     ]
     origin = int(min(buckets)) if buckets else 0
 
+    extra_fields = tuple(k[4:] for k in keys if k.startswith("arg:"))
     return {
-        "events": _typed_event_frame(reg_pd, time_resolution, origin, bucket_us, is_profile=False),
-        "profiles": _typed_event_frame(agg_pd, time_resolution, origin, bucket_us, is_profile=True),
+        "events": _typed_event_frame(
+            reg_pd, time_resolution, origin, bucket_us, False, extra_fields, metric_fields
+        ),
+        "profiles": _typed_event_frame(
+            agg_pd, time_resolution, origin, bucket_us, True, extra_fields, metric_fields
+        ),
         "system": _capsule_to_pandas(typed["counters"]),
     }
 
@@ -338,6 +355,7 @@ def _typed_read_to_ipc(
     group_keys: Optional[Tuple[str, ...]] = None,
     drop_file_patterns: Tuple[str, ...] = (),
     progress: Optional[Callable[[int, int], None]] = None,
+    metric_fields: Tuple[str, ...] = (),
 ) -> Dict[str, Optional[bytes]]:
     """One-pass typed read of the aggregation index mapped to the dfanalyzer
     {events, profiles, system} frames, as Arrow IPC bytes.
@@ -356,19 +374,32 @@ def _typed_read_to_ipc(
     typed = (
         tv.group_by(*(group_keys or _TYPED_GROUP_KEYS))
         .time_bucket(bucket_us)
-        .agg(*_TYPED_AGGS)
+        .agg(*_TYPED_AGGS, *("sum:" + c for c in metric_fields))
         .collect_typed(shard_begin, shard_end, progress)
     )
 
+    extra_fields = tuple(k[4:] for k in (group_keys or ()) if k.startswith("arg:"))
     events = _typed_event_frame(
-        _capsule_to_pandas(typed["regular"]), time_resolution, 0, bucket_us, False
+        _capsule_to_pandas(typed["regular"]),
+        time_resolution,
+        0,
+        bucket_us,
+        False,
+        extra_fields,
+        metric_fields,
     )
     if drop_file_patterns:
         events = _drop_ignored_files(events, drop_file_patterns)
     frames = {
         "events": events,
         "profiles": _typed_event_frame(
-            _capsule_to_pandas(typed["aggregated"]), time_resolution, 0, bucket_us, True
+            _capsule_to_pandas(typed["aggregated"]),
+            time_resolution,
+            0,
+            bucket_us,
+            True,
+            extra_fields,
+            metric_fields,
         ),
         "system": _capsule_to_pandas(typed["counters"]),
     }
@@ -932,6 +963,7 @@ def ensure_index(
     client=None,
     progress: Optional[Callable[[int, int, str], None]] = None,
     group_by_file: bool = True,
+    aggregation: Optional[AggregationConfig] = None,
 ):
     """Build (or refresh) the dftracer index for `trace_path` via Dask.
 
@@ -963,9 +995,8 @@ def ensure_index(
         local_staging=local_staging,
         shared_staging=os.path.dirname(index_path),
         client=client,
-        aggregation=AggregationConfig(
-            time_interval_ms=time_interval_ms, group_by_file=group_by_file
-        ),
+        aggregation=aggregation
+        or AggregationConfig(time_interval_ms=time_interval_ms, group_by_file=group_by_file),
         progress=progress,
     )
 

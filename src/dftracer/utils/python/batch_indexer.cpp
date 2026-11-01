@@ -408,7 +408,7 @@ static bool with_indexer(IndexerObject* self, Fn fn) {
     });
 }
 
-enum class IndexerCall { STATUS, BUILD, REBUILD, ENSURE };
+enum class IndexerCall { STATUS, PREPARE, BUILD, REBUILD, ENSURE };
 
 static bool run_indexer(IndexerObject* self, IndexerCall call,
                         dftracer::utils::index::IndexStatus& out) {
@@ -422,6 +422,9 @@ static bool run_indexer(IndexerObject* self, IndexerCall call,
         switch (call) {
             case IndexerCall::STATUS:
                 out = ix.status();
+                break;
+            case IndexerCall::PREPARE:
+                out = ix.prepare(force);
                 break;
             case IndexerCall::BUILD:
                 out = ix.build();
@@ -483,6 +486,13 @@ static PyObject* Indexer_resolve(IndexerObject* self,
                                  PyObject* Py_UNUSED(ignored)) {
     dftracer::utils::index::IndexStatus st;
     if (!run_indexer(self, IndexerCall::STATUS, st)) return nullptr;
+    return status_dict(st);
+}
+
+static PyObject* Indexer_prepare(IndexerObject* self,
+                                 PyObject* Py_UNUSED(ignored)) {
+    dftracer::utils::index::IndexStatus st;
+    if (!run_indexer(self, IndexerCall::PREPARE, st)) return nullptr;
     return status_dict(st);
 }
 
@@ -779,6 +789,9 @@ static PyObject* Indexer_query_file_info(IndexerObject* self,
 }
 
 static PyMethodDef Indexer_methods[] = {
+    {"prepare", DFTU_PYCFUNCTION(Indexer_prepare), METH_NOARGS,
+     "Invalidate stale state before an external SST build; return remaining "
+     "work."},
     {"get_checkpoint_indexer", DFTU_PYCFUNCTION(Indexer_get_checkpoint_indexer),
      METH_VARARGS,
      "get_checkpoint_indexer(file_path)\n"

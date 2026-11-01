@@ -123,17 +123,10 @@ coro::CoroTask<std::vector<ResolverResult::Failure>> build_aggregation(
 
 namespace {
 
-coro::CoroTask<ResolverResult> resolve_and_build_once(
-    CoroScope* scope, ResolveAndBuildInput input) {
-    std::size_t parallelism = input.parallelism;
-    if (parallelism == 0) {
-        parallelism = hardware_concurrency();
-    }
-
-    Resolver resolver;
+ResolverInput resolver_input_for(const ResolveAndBuildInput& input) {
     ResolverInput resolve_input;
-    resolve_input.directory = std::move(input.directory);
-    resolve_input.files = std::move(input.files);
+    resolve_input.directory = input.directory;
+    resolve_input.files = input.files;
     resolve_input.index_dir = input.index_dir;
     resolve_input.require_checkpoints = input.require_checkpoints;
     resolve_input.require_bloom = input.require_bloom;
@@ -141,10 +134,20 @@ coro::CoroTask<ResolverResult> resolve_and_build_once(
     resolve_input.checkpoint_size = input.checkpoint_size;
     resolve_input.aggregation_config = input.aggregation_config;
     resolve_input.schema = input.schema;
-    for (std::string& field : input.bloom_config.extra_dimensions)
-        field = extra_dimension_name(field);
-    if (input.build_bloom) resolve_input.bloom_config = input.bloom_config;
+    if (input.build_bloom) {
+        resolve_input.bloom_config = input.bloom_config;
+        for (auto& field : resolve_input.bloom_config->extra_dimensions)
+            field = extra_dimension_name(field);
+    }
 
+    return resolve_input;
+}
+
+}  // namespace
+
+coro::CoroTask<ResolverResult> prepare_index_build(ResolveAndBuildInput input) {
+    Resolver resolver;
+    auto resolve_input = resolver_input_for(input);
     auto result = co_await resolver(resolve_input);
 
     if (result.all_files.empty()) {
@@ -152,7 +155,7 @@ coro::CoroTask<ResolverResult> resolve_and_build_once(
     }
 
     // An index in another format is never read; it is rebuilt whole.
-    if (!result.outdated_roots.empty() && !input.force_rebuild) {
+    if (!result.outdated_roots.empty()) {
         for (const auto& root : result.outdated_roots) {
             // Close any cached open handle to this index before removing the
             // directory, or the removal fails with EBUSY.
@@ -186,6 +189,26 @@ coro::CoroTask<ResolverResult> resolve_and_build_once(
         agg::tier::clear(*agg::tier::open(
             root, index::store::RocksDatabase::OpenMode::ReadWrite));
     }
+
+    co_return co_await resolver(resolve_input);
+}
+
+namespace {
+
+coro::CoroTask<ResolverResult> resolve_and_build_once(
+    CoroScope* scope, ResolveAndBuildInput input) {
+    std::size_t parallelism = input.parallelism;
+    if (parallelism == 0) {
+        parallelism = hardware_concurrency();
+    }
+
+    for (auto& field : input.bloom_config.extra_dimensions)
+        field = extra_dimension_name(field);
+
+    Resolver resolver;
+    auto resolve_input = resolver_input_for(input);
+    auto result = co_await prepare_index_build(input);
+    if (result.all_files.empty()) co_return result;
 
     std::vector<std::string> files_needing_work;
     if (input.force_rebuild) {

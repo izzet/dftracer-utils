@@ -217,6 +217,12 @@ coro::CoroTask<IndexStatus> Indexer::status(CoroScope& scope) const {
     co_return status;
 }
 
+coro::CoroTask<IndexStatus> Indexer::prepare(CoroScope&, bool force) {
+    auto result =
+        co_await build::prepare_index_build(impl_->build_input(force));
+    co_return to_status(result);
+}
+
 coro::CoroTask<IndexStatus> Indexer::build(CoroScope& scope) {
     auto before = co_await status(scope);
     if (before.needs_work.empty() && !before.aggregation_needs_rebuild)
@@ -399,6 +405,12 @@ coro::CoroTask<IndexStatus> Indexer::drop_extension(CoroScope& scope,
 IndexStatus Indexer::status() const {
     return block_on<IndexStatus>(impl_->runtime(), "indexer-status",
                                  [this](CoroScope& s) { return status(s); });
+}
+
+IndexStatus Indexer::prepare(bool force) {
+    return block_on<IndexStatus>(
+        impl_->runtime(), "indexer-prepare",
+        [this, force](CoroScope& s) { return prepare(s, force); });
 }
 
 IndexStatus Indexer::build() {

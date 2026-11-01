@@ -1199,18 +1199,21 @@ def distributed_index(
     all_paths = [p for (p, _) in entries]
     n_total_files = len(all_paths)
 
-    if not force_rebuild:
-        from .indexer import Indexer
+    from .indexer import Indexer
 
-        with Indexer(
-            files=all_paths,
-            index_dir=index_path,
-            require_checkpoint=True,
-            require_bloom=True,
-            require_aggregation=aggregation_config,
-            force_rebuild=False,
-        ) as _resolver:
-            _status = _resolver.resolve()
+    # Resolve alone is read-only. Invalidate stale tier rows and dictionary
+    # together before ingesting replacement SSTs, using the native build path.
+    with Indexer(
+        files=all_paths,
+        index_dir=index_path,
+        require_checkpoint=True,
+        require_bloom=True,
+        require_aggregation=aggregation_config,
+        force_rebuild=force_rebuild,
+    ) as _resolver:
+        _status = _resolver.prepare()
+
+    if not force_rebuild:
         _needs = set(_status.needs_work)
         _log.info(
             "distributed_index: resolver reports %d/%d files need work",

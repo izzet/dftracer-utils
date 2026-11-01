@@ -58,6 +58,11 @@ struct ResolveAndBuildInput {
 coro::CoroTask<ResolverResult> resolve_and_build_index(
     CoroScope* scope, ResolveAndBuildInput input);
 
+/// Resolve and invalidate stale state before either a native or external SST
+/// build. Removes incompatible index formats and clears stale aggregation
+/// rows, dictionaries and manifests. Does not parse trace events.
+coro::CoroTask<ResolverResult> prepare_index_build(ResolveAndBuildInput input);
+
 /// Rebuilds any index root for `directory`/`files` that is missing or stale, so
 /// read-before-use entry points never see a changed source. Named coroutines
 /// with by-value params (CP.53) so callers, especially coroutine lambdas, hold

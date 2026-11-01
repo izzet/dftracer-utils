@@ -255,6 +255,15 @@ class Indexer:
         result = self._native.resolve()
         return IndexStatus._from_dict(result)
 
+    def prepare(self) -> IndexStatus:
+        """Invalidate stale state before an SST build, without parsing events.
+
+        Clears stale aggregation rows and their dictionary together; rebuilds
+        incompatible index formats. Honors the constructor's force_rebuild.
+        The caller must build the returned needs_work files before querying.
+        """
+        return IndexStatus._from_dict(self._native.prepare())
+
     def build(self) -> None:
         """Build all missing index tiers based on require_* flags.
 

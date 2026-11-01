@@ -160,6 +160,7 @@ class Indexer:
         """
         ...
 
+    def prepare(self) -> Dict[str, object]: ...
     def resolve(self) -> Dict[str, object]:
         """Resolve which files need indexing.
 

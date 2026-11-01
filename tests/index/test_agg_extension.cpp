@@ -127,6 +127,50 @@ double count_reads(const std::vector<std::string>& traces) {
 }  // namespace
 
 TEST_SUITE("AggExtension") {
+    TEST_CASE("prepare invalidates a stale tier without parsing events") {
+        TestEnvironment env(10);
+        const auto gz = write_trace(env.get_dir(), "prepare", 50, 1000);
+        auto options = with_aggregation(1000000);
+        auto ix = Indexer::open({gz}, options);
+        ix.build();
+        plant_sentinel(gz);
+        options.aggregation->extra_group_keys = {"step"};
+        auto changed = Indexer::open({gz}, options);
+        const auto remaining = changed.prepare();
+        CHECK(remaining.total == 1);
+        CHECK(remaining.ready.empty());
+        CHECK(remaining.needs_work == std::vector<std::string>{gz});
+        CHECK(has_sentinel(gz));
+        CHECK_FALSE(agg_entry(changed, gz));
+        changed.build();
+        CHECK(count_reads({gz}) == 50);
+    }
+
+    TEST_CASE("prepare removes incompatible formats even for a forced build") {
+        namespace layout = dftracer::utils::index::store::layout;
+        for (const bool force : {false, true}) {
+            TestEnvironment env(10);
+            const auto gz = write_trace(env.get_dir(), "format", 50, 1000);
+            auto ix = Indexer::open({gz}, with_aggregation(1000000));
+            ix.build();
+            {
+                IndexDatabase db(index_of(gz));
+                auto writer = db.begin_write();
+                std::string body;
+                layout::append_u32(body, IndexDatabase::FORMAT_VERSION + 1);
+                writer->put(layout::Family::REGISTRY, layout::format_key(),
+                            layout::with_header(layout::Ext::HOST,
+                                                layout::host::FORMAT, body));
+                writer->commit();
+            }
+            const auto remaining = ix.prepare(force);
+            CHECK(remaining.needs_work == std::vector<std::string>{gz});
+            CHECK_FALSE(fs::exists(index_of(gz)));
+            ix.build();
+            CHECK(count_reads({gz}) == 50);
+        }
+    }
+
     TEST_CASE("tier config round trips old and extended records") {
         namespace tier = index::schemas::dft::agg::tier;
         TestEnvironment env(10);

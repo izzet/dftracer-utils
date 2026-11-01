@@ -153,6 +153,9 @@ class Indexer {
 
     /// Which files are ready for the requested tiers. Writes nothing.
     coro::CoroTask<IndexStatus> status(CoroScope& scope) const;
+    /// Invalidate stale state before an external SST build, without parsing
+    /// events. Other current tiers are kept. Returns the remaining work.
+    coro::CoroTask<IndexStatus> prepare(CoroScope& scope, bool force = false);
     /// Builds the requested tiers for files that lack them or changed since
     /// they were indexed; fresh files are left alone.
     coro::CoroTask<IndexStatus> build(CoroScope& scope);
@@ -182,6 +185,7 @@ class Indexer {
 
     /// Blocking forms, run on IndexerOptions::runtime.
     IndexStatus status() const;
+    IndexStatus prepare(bool force = false);
     IndexStatus build();
     IndexStatus rebuild();
     std::vector<IndexedFile> files() const;
